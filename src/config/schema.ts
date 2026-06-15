@@ -2,6 +2,7 @@ export interface AppConfig {
   matrix: MatrixConfig;
   audio: AudioConfig;
   updater: UpdaterConfig;
+  control: ControlConfig;
   notifications: NotificationConfig;
 }
 
@@ -31,6 +32,12 @@ export interface UpdaterConfig {
   branch: string;
   installDir: string;
   checkEveryMinutes: number;
+}
+
+export interface ControlConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
 }
 
 export interface NotificationConfig {
@@ -63,6 +70,11 @@ export const defaultConfig: AppConfig = {
     branch: "main",
     installDir: "C:\\Tools\\RaphiiWinUtils",
     checkEveryMinutes: 30
+  },
+  control: {
+    enabled: true,
+    host: "127.0.0.1",
+    port: 17642
   },
   notifications: {
     enabled: true,

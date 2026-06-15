@@ -1,14 +1,26 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { interval, merge, of, switchMap } from "rxjs";
+import { exhaustMap, from, Subject, Subscription, timer } from "rxjs";
 import type { UpdaterConfig } from "../config/schema";
 import { Logger } from "../system/logger";
 import { getRuntimeRoot } from "../system/paths";
 import { requireSuccess, runCommand } from "../system/process";
 import type { Notifier } from "../system/notify";
 
+interface UpdateCheckRequest {
+  reason: string;
+}
+
 export class Updater {
   private readonly log: Logger;
+  private readonly checkRequests$ = new Subject<UpdateCheckRequest>();
+  private readonly subscriptions = new Subscription();
+  private active = false;
+  private checkInProgress = false;
+  private lastCheckStartedAt?: string;
+  private lastCheckFinishedAt?: string;
+  private lastCheckReason?: string;
+  private lastCheckResult?: string;
 
   constructor(
     private readonly config: UpdaterConfig,
@@ -32,21 +44,72 @@ export class Updater {
       return;
     }
 
+    this.active = true;
     const everyMs = Math.max(1, this.config.checkEveryMinutes) * 60_000;
-    merge(of(0), interval(everyMs))
-      .pipe(switchMap(() => this.checkOnce()))
-      .subscribe({
-        error: (error) => {
-          this.log.error("Updater stream failed", { error: String(error) });
-        }
-      });
+    this.subscriptions.add(
+      this.checkRequests$
+        .pipe(exhaustMap((request) => from(this.checkOnce(request.reason))))
+        .subscribe({
+          error: (error) => {
+            this.log.error("Updater stream failed", { error: String(error) });
+          }
+        })
+    );
+
+    this.subscriptions.add(
+      timer(0, everyMs).subscribe(() => {
+        this.requestCheck("timer");
+      })
+    );
   }
 
-  private async checkOnce(): Promise<void> {
+  stop(): void {
+    this.subscriptions.unsubscribe();
+    this.active = false;
+  }
+
+  requestCheck(reason: string): boolean {
+    if (!this.active) {
+      this.log.debug("Update check request ignored because updater is inactive", { reason });
+      return false;
+    }
+
+    if (this.checkInProgress) {
+      this.log.info("Update check request ignored because a check is already running", {
+        reason,
+        currentReason: this.lastCheckReason
+      });
+      return false;
+    }
+
+    this.checkInProgress = true;
+    this.checkRequests$.next({ reason });
+    return true;
+  }
+
+  getStatus(): Record<string, unknown> {
+    return {
+      active: this.active,
+      checkInProgress: this.checkInProgress,
+      lastCheckReason: this.lastCheckReason,
+      lastCheckStartedAt: this.lastCheckStartedAt,
+      lastCheckFinishedAt: this.lastCheckFinishedAt,
+      lastCheckResult: this.lastCheckResult
+    };
+  }
+
+  private async checkOnce(reason: string): Promise<void> {
+    this.lastCheckReason = reason;
+    this.lastCheckStartedAt = new Date().toISOString();
+    this.lastCheckFinishedAt = undefined;
+    this.lastCheckResult = undefined;
+    this.log.info("Update check started", { reason });
+
     const sourceDir = join(this.config.installDir, "source");
     try {
       const sourceReady = await ensureSourceClone(this.config, sourceDir);
       if (!sourceReady) {
+        this.lastCheckResult = "source-unavailable";
         this.log.warn("Update source is not available yet; skipping update check");
         return;
       }
@@ -55,10 +118,12 @@ export class Updater {
       const deployed = readDeployedRevision(this.config.installDir);
 
       if (deployed === remote) {
+        this.lastCheckResult = "no-update";
         this.log.debug("No update available", { deployed });
         return;
       }
 
+      this.lastCheckResult = "update-available";
       this.notifier.send("RaphiiWinUtils", "Update found. Building new version.");
       this.log.info("Update available", { deployed, remote });
       await requireSuccess("git", ["reset", "--hard", `origin/${this.config.branch}`], { cwd: sourceDir, timeoutMs: 60_000 });
@@ -67,8 +132,12 @@ export class Updater {
 
       await stageAndRestart(sourceDir, this.config.installDir, remote);
     } catch (error) {
+      this.lastCheckResult = "failed";
       this.log.error("Update check failed", { error: String(error) });
       this.notifier.send("RaphiiWinUtils update failed", String(error).slice(0, 180));
+    } finally {
+      this.lastCheckFinishedAt = new Date().toISOString();
+      this.checkInProgress = false;
     }
   }
 }

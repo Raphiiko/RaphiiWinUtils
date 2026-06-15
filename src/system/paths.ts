@@ -21,3 +21,13 @@ export function getHelperPath(): string {
 
   return runtimeHelper;
 }
+
+export function getSnoreToastPath(): string {
+  const runtimeHelper = join(getRuntimeRoot(), "helpers", "SnoreToast", "snoretoast.exe");
+  if (existsSync(runtimeHelper)) return runtimeHelper;
+
+  const devHelper = join(process.cwd(), "dist", "helpers", "SnoreToast", "snoretoast.exe");
+  if (existsSync(devHelper)) return devHelper;
+
+  return runtimeHelper;
+}

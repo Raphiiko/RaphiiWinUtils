@@ -30,7 +30,22 @@ The install command builds the app into:
 C:\Tools\RaphiiWinUtils
 ```
 
-and creates a startup shortcut in the current user's Startup folder.
+It also:
+
+- creates a startup shortcut in the current user's Startup folder
+- registers the Windows notification identity
+- installs a local `post-push` Git hook that asks the running app to check for updates immediately
+
+## Local Control API
+
+The app exposes a localhost-only Elysia API:
+
+```text
+GET  http://127.0.0.1:17642/health
+POST http://127.0.0.1:17642/update/check
+```
+
+The `POST /update/check` route queues one self-update check. If a check is already running it returns `409` and leaves the running check alone.
 
 ## Matrix Requirements
 

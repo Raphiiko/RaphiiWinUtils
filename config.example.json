@@ -44,6 +44,11 @@
     "installDir": "C:\\Tools\\RaphiiWinUtils",
     "checkEveryMinutes": 30
   },
+  "control": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 17642
+  },
   "notifications": {
     "enabled": true,
     "appName": "RaphiiWinUtils"

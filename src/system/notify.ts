@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import type { NotificationConfig } from "../config/schema";
 import { Logger } from "./logger";
+import { getSnoreToastPath } from "./paths";
 
 export class Notifier {
   private readonly log: Logger;
@@ -15,37 +16,29 @@ export class Notifier {
   send(title: string, body: string): void {
     if (!this.config.enabled) return;
 
-    const ps = [
-      "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null",
-      "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null",
-      "$template = @\"",
-      "<toast><visual><binding template=\"ToastGeneric\"><text>$($args[0])</text><text>$($args[1])</text></binding></visual></toast>",
-      "\"@",
-      "$xml = New-Object Windows.Data.Xml.Dom.XmlDocument",
-      "$xml.LoadXml($template)",
-      "$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)",
-      `[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("${escapeForPowerShell(this.config.appName)}").Show($toast)`
-    ].join("; ");
-
-    const child = spawn("powershell.exe", [
-      "-NoProfile",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-Command",
-      ps,
+    const child = spawn(getSnoreToastPath(), [
+      "-appID",
+      "Raphiiko.RaphiiWinUtils",
+      "-t",
       title,
-      body
+      "-m",
+      body,
+      "-silent"
     ], {
       windowsHide: true,
-      stdio: "ignore"
+      stdio: ["ignore", "ignore", "pipe"]
+    });
+
+    child.stderr.on("data", (chunk: Buffer) => {
+      this.log.warn("SnoreToast stderr", { message: chunk.toString("utf8").trim() });
     });
 
     child.on("error", (error) => {
       this.log.warn("Failed to send notification", { error: String(error) });
     });
-  }
-}
 
-function escapeForPowerShell(value: string): string {
-  return value.replace(/"/g, "`\"");
+    child.on("exit", (code) => {
+      if (code === -1) this.log.warn("SnoreToast reported notification failure", { code });
+    });
+  }
 }
