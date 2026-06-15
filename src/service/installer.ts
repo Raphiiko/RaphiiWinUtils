@@ -49,7 +49,7 @@ export async function installLocal(config: AppConfig, logger: Logger): Promise<v
   }
 
   createWindowsShortcuts(installDir, config.notifications.appName);
-  await installPostPushHook(config, log);
+  await installPushUpdateHook(config, log);
   log.info("Install complete", { exe: join(installDir, "RaphiiWinUtils.exe") });
 }
 
@@ -133,15 +133,15 @@ async function writeDeployedRevision(installDir: string, log: Logger): Promise<v
   }
 }
 
-async function installPostPushHook(config: AppConfig, log: Logger): Promise<void> {
+async function installPushUpdateHook(config: AppConfig, log: Logger): Promise<void> {
   if (!config.control.enabled) {
-    log.info("Skipping post-push hook because control API is disabled");
+    log.info("Skipping push update hook because control API is disabled");
     return;
   }
 
   try {
     const hookPath = (
-      await requireSuccess("git", ["rev-parse", "--git-path", "hooks/post-push"], {
+      await requireSuccess("git", ["rev-parse", "--git-path", "hooks/pre-push"], {
         cwd: process.cwd()
       })
     ).stdout.trim();
@@ -151,7 +151,8 @@ async function installPostPushHook(config: AppConfig, log: Logger): Promise<void
     const end = "# END RaphiiWinUtils update check";
     const block = [
       begin,
-      `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-RestMethod -Method Post -Uri '${endpoint}' | Out-Null } catch { }"`,
+      "# Git has no client-side post-push hook, so pre-push starts a background process that waits for this git push to exit.",
+      `RAPHII_GIT_PUSH_PID="$PPID" powershell.exe -NoProfile -ExecutionPolicy Bypass -Command 'Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-Command","try { Wait-Process -Id $env:RAPHII_GIT_PUSH_PID -ErrorAction SilentlyContinue } catch { }; try { Invoke-RestMethod -Method Post -Uri ${endpoint} | Out-Null } catch { }") -WindowStyle Hidden'`,
       end
     ].join("\n");
 
@@ -167,9 +168,36 @@ async function installPostPushHook(config: AppConfig, log: Logger): Promise<void
       .trimEnd();
     writeFileSync(absoluteHookPath, `${withoutOldBlock}\n\n${block}\n`, "utf8");
     chmodSync(absoluteHookPath, 0o755);
-    log.info("Installed post-push update hook", { hookPath: absoluteHookPath, endpoint });
+    removeManagedPostPushHook(log);
+    log.info("Installed push update hook", { hookPath: absoluteHookPath, endpoint });
   } catch (error) {
-    log.warn("Could not install post-push update hook", { error: String(error) });
+    log.warn("Could not install push update hook", { error: String(error) });
+  }
+}
+
+function removeManagedPostPushHook(log: Logger): void {
+  try {
+    const hookPath = join(process.cwd(), ".git", "hooks", "post-push");
+    const begin = "# BEGIN RaphiiWinUtils update check";
+    const end = "# END RaphiiWinUtils update check";
+    if (!existsSync(hookPath)) return;
+
+    const existing = readFileSync(hookPath, "utf8");
+    const withoutOldBlock = existing
+      .replace(
+        new RegExp(`\\n?${escapeRegExp(begin)}[\\s\\S]*?${escapeRegExp(end)}\\n?`, "m"),
+        "\n"
+      )
+      .trimEnd();
+
+    if (withoutOldBlock.trim().length === 0 || withoutOldBlock.trim() === "#!/bin/sh") {
+      rmSync(hookPath, { force: true });
+      return;
+    }
+
+    writeFileSync(hookPath, `${withoutOldBlock}\n`, "utf8");
+  } catch (error) {
+    log.warn("Could not remove old post-push hook", { error: String(error) });
   }
 }
 

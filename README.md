@@ -34,7 +34,7 @@ It also:
 
 - creates a startup shortcut in the current user's Startup folder
 - registers the Windows notification identity
-- installs a local `post-push` Git hook that asks the running app to check for updates immediately
+- installs a local `pre-push` Git hook that starts a background watcher; Git has no native `post-push` hook, so the watcher waits for `git push` to exit before asking the running app to check for updates
 
 ## Local Control API
 
