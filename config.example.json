@@ -1,0 +1,51 @@
+{
+  "matrix": {
+    "host": "127.0.0.1",
+    "port": 6980,
+    "streamName": "Command1"
+  },
+  "audio": {
+    "pollMs": 1000,
+    "minDb": -60,
+    "maxDb": 0,
+    "zeroVolumeMutes": true,
+    "channels": [
+      {
+        "name": "System",
+        "endpointNameContains": "System Audio",
+        "presetPatch": 1
+      },
+      {
+        "name": "Browser",
+        "endpointNameContains": "Browser Audio",
+        "presetPatch": 2
+      },
+      {
+        "name": "Voice",
+        "endpointNameContains": "Voice Audio",
+        "presetPatch": 3
+      },
+      {
+        "name": "Music",
+        "endpointNameContains": "Music Audio",
+        "presetPatch": 4
+      },
+      {
+        "name": "Game",
+        "endpointNameContains": "Game Audio",
+        "presetPatch": 5
+      }
+    ]
+  },
+  "updater": {
+    "enabled": true,
+    "repoUrl": "https://github.com/Raphiiko/RaphiiWinUtils.git",
+    "branch": "main",
+    "installDir": "C:\\Tools\\RaphiiWinUtils",
+    "checkEveryMinutes": 30
+  },
+  "notifications": {
+    "enabled": true,
+    "appName": "RaphiiWinUtils"
+  }
+}
