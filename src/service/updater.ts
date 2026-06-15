@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { interval, merge, of, switchMap } from "rxjs";
 import type { UpdaterConfig } from "../config/schema";
@@ -50,22 +50,22 @@ export class Updater {
         this.log.warn("Update source is not available yet; skipping update check");
         return;
       }
-      const current = (await requireSuccess("git", ["rev-parse", "HEAD"], { cwd: sourceDir })).stdout.trim();
       await requireSuccess("git", ["fetch", "origin", this.config.branch], { cwd: sourceDir, timeoutMs: 120_000 });
       const remote = (await requireSuccess("git", ["rev-parse", `origin/${this.config.branch}`], { cwd: sourceDir })).stdout.trim();
+      const deployed = readDeployedRevision(this.config.installDir);
 
-      if (current === remote) {
-        this.log.debug("No update available", { current });
+      if (deployed === remote) {
+        this.log.debug("No update available", { deployed });
         return;
       }
 
       this.notifier.send("RaphiiWinUtils", "Update found. Building new version.");
-      this.log.info("Update available", { current, remote });
+      this.log.info("Update available", { deployed, remote });
       await requireSuccess("git", ["reset", "--hard", `origin/${this.config.branch}`], { cwd: sourceDir, timeoutMs: 60_000 });
       await requireSuccess("bun", ["install", "--frozen-lockfile"], { cwd: sourceDir, timeoutMs: 120_000 });
       await requireSuccess("bun", ["run", "build:all"], { cwd: sourceDir, timeoutMs: 180_000 });
 
-      await stageAndRestart(sourceDir, this.config.installDir);
+      await stageAndRestart(sourceDir, this.config.installDir, remote);
     } catch (error) {
       this.log.error("Update check failed", { error: String(error) });
       this.notifier.send("RaphiiWinUtils update failed", String(error).slice(0, 180));
@@ -99,7 +99,14 @@ async function ensureSourceClone(config: UpdaterConfig, sourceDir: string): Prom
   return true;
 }
 
-async function stageAndRestart(sourceDir: string, installDir: string): Promise<void> {
+function readDeployedRevision(installDir: string): string | undefined {
+  const marker = join(installDir, ".deployed-revision");
+  if (!existsSync(marker)) return undefined;
+  const revision = readFileSync(marker, "utf8").trim();
+  return revision || undefined;
+}
+
+async function stageAndRestart(sourceDir: string, installDir: string, revision: string): Promise<void> {
   const distDir = join(sourceDir, "dist");
   const script = [
     `$pidToWait = ${process.pid}`,
@@ -110,6 +117,7 @@ async function stageAndRestart(sourceDir: string, installDir: string): Promise<v
     "$helpers = Join-Path $install 'helpers'",
     "if (Test-Path -LiteralPath $helpers) { Remove-Item -LiteralPath $helpers -Recurse -Force }",
     "Copy-Item -LiteralPath (Join-Path $dist 'helpers') -Destination $helpers -Recurse -Force",
+    `Set-Content -LiteralPath (Join-Path $install '.deployed-revision') -Value "${ps(revision)}" -Encoding UTF8`,
     "Start-Process -FilePath (Join-Path $install 'RaphiiWinUtils.exe') -WorkingDirectory $install -WindowStyle Hidden"
   ].join("; ");
 

@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AppConfig } from "../config/schema";
 import { Logger } from "../system/logger";
@@ -17,6 +17,7 @@ export async function installLocal(config: AppConfig, logger: Logger): Promise<v
 
   log.info("Deploying build", { installDir });
   copyBuildArtifacts(join(process.cwd(), "dist"), installDir);
+  await writeDeployedRevision(installDir, log);
 
   if (existsSync(sourceDir) && !existsSync(join(sourceDir, ".git"))) {
     rmSync(sourceDir, { recursive: true, force: true });
@@ -77,6 +78,15 @@ function createStartupShortcut(installDir: string, appName: string): void {
   const result = Bun.spawnSync(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script]);
   if (result.exitCode !== 0) {
     throw new Error(`Failed to create startup shortcut: ${new TextDecoder().decode(result.stderr)}`);
+  }
+}
+
+async function writeDeployedRevision(installDir: string, log: Logger): Promise<void> {
+  try {
+    const revision = (await requireSuccess("git", ["rev-parse", "HEAD"], { cwd: process.cwd() })).stdout.trim();
+    writeFileSync(join(installDir, ".deployed-revision"), `${revision}\n`, "utf8");
+  } catch (error) {
+    log.warn("Could not write deployed revision marker", { error: String(error) });
   }
 }
 
