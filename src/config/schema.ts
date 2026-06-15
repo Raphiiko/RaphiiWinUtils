@@ -32,6 +32,9 @@ export interface AudioModesConfig {
   mainOutputSlot: string;
   micMixOutputSlot: string;
   micOutputChannels: number[];
+  engineSettleMs: number;
+  routeRetryCount: number;
+  routeRetryDelayMs: number;
   modes: Record<string, AudioModeConfig>;
 }
 
@@ -90,6 +93,9 @@ export const defaultConfig: AppConfig = {
     mainOutputSlot: "WIN1.OUT",
     micMixOutputSlot: "VAIO1",
     micOutputChannels: [1, 2],
+    engineSettleMs: 2500,
+    routeRetryCount: 5,
+    routeRetryDelayMs: 500,
     modes: {
       "desk-mic": {
         name: "Desk Mic",

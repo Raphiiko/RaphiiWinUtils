@@ -4,7 +4,7 @@ import { Notifier } from "./system/notify";
 import { AudioModeService } from "./service/audioModeService";
 import { ChannelVolumeService } from "./service/channelVolumeService";
 import { ControlServer } from "./service/controlServer";
-import { Updater } from "./service/updater";
+import { notifyCompletedUpdateIfNeeded, Updater } from "./service/updater";
 import { installLocal } from "./service/installer";
 
 const logger = new Logger("raphii-win-utils");
@@ -26,6 +26,7 @@ async function main(): Promise<void> {
   }
 
   logger.info("Service starting");
+  notifyCompletedUpdateIfNeeded(config.updater, notifier, logger);
 
   const updater = new Updater(config.updater, notifier, logger);
   updater.start();

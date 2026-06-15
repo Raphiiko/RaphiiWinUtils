@@ -155,6 +155,39 @@ export class Updater {
   }
 }
 
+export function notifyCompletedUpdateIfNeeded(
+  config: UpdaterConfig,
+  notifier: Notifier,
+  logger: Logger
+): void {
+  const log = logger.child("updater");
+  if (!isInstalledRuntime(config.installDir)) return;
+
+  const marker = getUpdateCompletedMarkerPath(config.installDir);
+  if (!existsSync(marker)) return;
+
+  let revision: string | undefined;
+  try {
+    const completion = JSON.parse(readFileSync(marker, "utf8")) as Partial<{
+      revision: string;
+    }>;
+    revision = completion.revision;
+  } catch (error) {
+    log.warn("Could not read update completion marker", { error: String(error) });
+  } finally {
+    rmSync(marker, { force: true });
+  }
+
+  const shortRevision = revision?.slice(0, 7);
+  notifier.send(
+    "RaphiiWinUtils update complete",
+    shortRevision
+      ? `Updated to ${shortRevision} and restarted successfully.`
+      : "Updated and restarted successfully."
+  );
+  log.info("Update completion notification sent", { revision });
+}
+
 function isInstalledRuntime(installDir: string): boolean {
   return normalize(getRuntimeRoot()) === normalize(installDir);
 }
@@ -192,6 +225,10 @@ function readDeployedRevision(installDir: string): string | undefined {
   return revision || undefined;
 }
 
+function getUpdateCompletedMarkerPath(installDir: string): string {
+  return join(installDir, ".update-completed.json");
+}
+
 function stageAndRestart(sourceDir: string, installDir: string, revision: string): void {
   const distDir = join(sourceDir, "dist");
   const scriptPath = join(installDir, "apply-update.ps1");
@@ -208,6 +245,7 @@ function stageAndRestart(sourceDir: string, installDir: string, revision: string
     `$install = "${ps(installDir)}"`,
     `$revision = "${ps(revision)}"`,
     `$logPath = "${ps(logPath)}"`,
+    `$completionMarker = "${ps(getUpdateCompletedMarkerPath(installDir))}"`,
     "New-Item -ItemType Directory -Path (Split-Path -Parent $logPath) -Force | Out-Null",
     "function Write-UpdateLog([string]$message) { Add-Content -LiteralPath $logPath -Value ((Get-Date).ToString('o') + ' ' + $message) }",
     "try {",
@@ -221,6 +259,7 @@ function stageAndRestart(sourceDir: string, installDir: string, revision: string
     "  if (Test-Path -LiteralPath $helpers) { Remove-Item -LiteralPath $helpers -Recurse -Force }",
     "  Copy-Item -LiteralPath (Join-Path $dist 'helpers') -Destination $helpers -Recurse -Force",
     "  Set-Content -LiteralPath (Join-Path $install '.deployed-revision') -Value $revision -Encoding UTF8",
+    "  @{ revision = $revision; completedAt = (Get-Date).ToString('o') } | ConvertTo-Json -Compress | Set-Content -LiteralPath $completionMarker -Encoding UTF8",
     '  Write-UpdateLog "Starting updated service at revision $revision"',
     "  Start-Process -FilePath (Join-Path $install 'RaphiiWinUtils.exe') -WorkingDirectory $install -WindowStyle Hidden",
     "  Write-UpdateLog 'Update handoff complete'",

@@ -1,4 +1,4 @@
-import type { AppConfig, AudioModeConfig } from "../config/schema";
+import type { AppConfig, AudioModeConfig, AudioModeMicRoute } from "../config/schema";
 import { VbanTextClient } from "../matrix/vbanTextClient";
 import { Logger } from "../system/logger";
 
@@ -53,17 +53,17 @@ export class AudioModeService {
     }
 
     await this.sendMatrixCommand(outputCommand);
-    await delay(750);
-    await this.sendMatrixCommand(resetCommand);
-    await delay(50);
-    await this.sendMatrixCommand(routeCommand);
+    await delay(this.config.audioModes.engineSettleMs);
+
+    const verification = await this.applyMicRoutingWithRetry(mode, resetCommand, routeCommand);
 
     this.log.info("Audio mode applied", {
       id,
       name: mode.name,
       outputDeviceName: mode.outputDeviceName,
       micInputSlot: mode.micInputSlot,
-      micRoutes: mode.micRoutes
+      micRoutes: mode.micRoutes,
+      routeAttempts: verification.attempts
     });
 
     return {
@@ -111,6 +111,109 @@ export class AudioModeService {
       await client.close();
     }
   }
+
+  private async applyMicRoutingWithRetry(
+    mode: AudioModeConfig,
+    resetCommand: string,
+    routeCommand: string
+  ): Promise<{ attempts: number }> {
+    const attempts = Math.max(1, this.config.audioModes.routeRetryCount);
+    let lastFailure: MatrixRouteVerification | undefined;
+
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      await this.sendMatrixCommand(resetCommand);
+      await delay(100);
+      await this.sendMatrixCommand(routeCommand);
+      await delay(this.config.audioModes.routeRetryDelayMs);
+
+      const verification = await this.verifyMicRouting(mode);
+      if (verification.ok) {
+        if (attempt > 1) {
+          this.log.info("Mic route verified after retry", { attempt, mode: mode.name });
+        }
+        return { attempts: attempt };
+      }
+
+      lastFailure = verification;
+      this.log.warn("Mic route verification failed; retrying", {
+        attempt,
+        mode: mode.name,
+        failures: verification.failures
+      });
+    }
+
+    throw new Error(
+      `Could not verify mic route for ${mode.name}: ${JSON.stringify(lastFailure?.failures ?? [])}`
+    );
+  }
+
+  private async verifyMicRouting(mode: AudioModeConfig): Promise<MatrixRouteVerification> {
+    const expected = new Set(mode.micRoutes.map((route) => routeKey(mode.micInputSlot, route)));
+    const failures: string[] = [];
+
+    for (const candidate of this.getKnownMicRouteCandidates()) {
+      const key = routeKey(candidate.inputSlot, candidate);
+      const gain = await this.queryPointGain(
+        candidate.inputSlot,
+        candidate.inputChannel,
+        candidate.outputChannel
+      );
+      const shouldExist = expected.has(key);
+
+      if (gain === undefined) {
+        failures.push(`${key} did not reply`);
+        continue;
+      }
+
+      if (shouldExist && Math.abs(gain) > 0.05) {
+        failures.push(`${key} expected 0.0 dB, got ${formatGain(gain)}`);
+      } else if (!shouldExist && gain !== Number.NEGATIVE_INFINITY) {
+        failures.push(`${key} expected removed, got ${formatGain(gain)}`);
+      }
+    }
+
+    return {
+      ok: failures.length === 0,
+      failures
+    };
+  }
+
+  private getKnownMicRouteCandidates(): MicRouteCandidate[] {
+    const inputPoints = new Map<string, { inputSlot: string; inputChannel: number }>();
+    for (const mode of Object.values(this.config.audioModes.modes)) {
+      for (const route of mode.micRoutes) {
+        const key = `${mode.micInputSlot}[${route.inputChannel}]`;
+        inputPoints.set(key, {
+          inputSlot: mode.micInputSlot,
+          inputChannel: route.inputChannel
+        });
+      }
+    }
+
+    const candidates: MicRouteCandidate[] = [];
+    for (const inputPoint of inputPoints.values()) {
+      for (const outputChannel of this.config.audioModes.micOutputChannels) {
+        candidates.push({ ...inputPoint, outputChannel });
+      }
+    }
+
+    return candidates;
+  }
+
+  private async queryPointGain(
+    inputSlot: string,
+    inputChannel: number,
+    outputChannel: number
+  ): Promise<number | undefined> {
+    const command = `Point(${inputSlot}[${inputChannel}],${this.config.audioModes.micMixOutputSlot}.OUT[${outputChannel}]).dBGain = ?;`;
+    const client = new VbanTextClient(this.config.matrix, this.log);
+    try {
+      const responses = await client.request(command, 500);
+      return parseGainResponse(responses[0]);
+    } finally {
+      await client.close();
+    }
+  }
 }
 
 export class UnknownAudioModeError extends Error {
@@ -138,4 +241,34 @@ function formatChannelRange(channels: number[]): string {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+interface MicRouteCandidate extends AudioModeMicRoute {
+  inputSlot: string;
+}
+
+interface MatrixRouteVerification {
+  ok: boolean;
+  failures: string[];
+}
+
+function routeKey(inputSlot: string, route: AudioModeMicRoute): string {
+  return `${inputSlot}[${route.inputChannel}]->${route.outputChannel}`;
+}
+
+function parseGainResponse(response: string | undefined): number | undefined {
+  if (!response) return undefined;
+
+  const match = response.match(/=\s*([^;]+);?\s*$/);
+  if (!match) return undefined;
+
+  const value = match[1]?.trim();
+  if (value === "-inf") return Number.NEGATIVE_INFINITY;
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function formatGain(gain: number): string {
+  return gain === Number.NEGATIVE_INFINITY ? "-inf" : gain.toFixed(1);
 }

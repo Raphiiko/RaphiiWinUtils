@@ -28,6 +28,44 @@ export class VbanTextClient {
     this.log.debug("Sent Matrix command", { command });
   }
 
+  async request(command: string, timeoutMs = 750): Promise<string[]> {
+    const packet = this.createPacket(command);
+    const responses: string[] = [];
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup();
+        resolve();
+      }, timeoutMs);
+
+      const cleanup = () => {
+        clearTimeout(timeout);
+        this.socket.off("message", onMessage);
+        this.socket.off("error", onError);
+      };
+
+      const onMessage = (message: Buffer) => {
+        responses.push(message.subarray(VBAN_HEADER_BYTES).toString("utf8"));
+      };
+
+      const onError = (error: Error) => {
+        cleanup();
+        reject(error);
+      };
+
+      this.socket.on("message", onMessage);
+      this.socket.once("error", onError);
+      this.socket.bind(0, () => {
+        this.socket.send(packet, this.config.port, this.config.host, (error) => {
+          if (error) onError(error);
+        });
+      });
+    });
+
+    this.log.debug("Requested Matrix value", { command, responses });
+    return responses;
+  }
+
   async close(): Promise<void> {
     await new Promise<void>((resolve) => this.socket.close(() => resolve()));
   }
