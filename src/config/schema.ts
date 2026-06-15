@@ -31,9 +31,7 @@ export interface AudioChannelConfig {
 export interface AudioModesConfig {
   mainOutputSlot: string;
   micMixOutputSlot: string;
-  micSourceChannelsToClear: number[];
   micOutputChannels: number[];
-  micInputSlotsToClear: string[];
   modes: Record<string, AudioModeConfig>;
 }
 
@@ -41,7 +39,12 @@ export interface AudioModeConfig {
   name: string;
   outputDeviceName: string;
   micInputSlot: string;
-  micInputChannel: number;
+  micRoutes: AudioModeMicRoute[];
+}
+
+export interface AudioModeMicRoute {
+  inputChannel: number;
+  outputChannel: number;
 }
 
 export interface UpdaterConfig {
@@ -86,45 +89,61 @@ export const defaultConfig: AppConfig = {
   audioModes: {
     mainOutputSlot: "WIN1.OUT",
     micMixOutputSlot: "VAIO1",
-    micSourceChannelsToClear: [1, 2],
     micOutputChannels: [1, 2],
-    micInputSlotsToClear: ["WIN1.IN", "WIN2.IN", "WIN3.IN", "WIN4.IN", "WIN5.IN"],
     modes: {
       "desk-mic": {
         name: "Desk Mic",
         outputDeviceName: "Headset (3- Arctis Nova Pro Wireless)",
         micInputSlot: "WIN1.IN",
-        micInputChannel: 1
+        micRoutes: [
+          { inputChannel: 1, outputChannel: 1 },
+          { inputChannel: 1, outputChannel: 2 }
+        ]
       },
       beyond: {
         name: "Beyond",
         outputDeviceName: "Bigscreen Beyond (USB-C to 3.5mm Headphone Jack Adapter)",
         micInputSlot: "WIN3.IN",
-        micInputChannel: 1
+        micRoutes: [
+          { inputChannel: 1, outputChannel: 1 },
+          { inputChannel: 2, outputChannel: 2 }
+        ]
       },
       headset: {
         name: "Headset",
         outputDeviceName: "Headset (3- Arctis Nova Pro Wireless)",
         micInputSlot: "WIN2.IN",
-        micInputChannel: 1
+        micRoutes: [
+          { inputChannel: 1, outputChannel: 1 },
+          { inputChannel: 2, outputChannel: 2 }
+        ]
       },
       iem: {
         name: "IEM",
         outputDeviceName: "In Ear Monitors (2- USB-C to 3.5mm Headphone Jack Adapter)",
         micInputSlot: "WIN1.IN",
-        micInputChannel: 1
+        micRoutes: [
+          { inputChannel: 1, outputChannel: 1 },
+          { inputChannel: 1, outputChannel: 2 }
+        ]
       },
       speaker: {
         name: "Speaker",
         outputDeviceName: "Desktop Speakers (USB SPDIF Adapter)",
         micInputSlot: "WIN1.IN",
-        micInputChannel: 1
+        micRoutes: [
+          { inputChannel: 1, outputChannel: 1 },
+          { inputChannel: 1, outputChannel: 2 }
+        ]
       },
       tws: {
         name: "TWS",
         outputDeviceName: "Nothing Ear (Nothing Ear)",
         micInputSlot: "WIN1.IN",
-        micInputChannel: 1
+        micRoutes: [
+          { inputChannel: 1, outputChannel: 1 },
+          { inputChannel: 1, outputChannel: 2 }
+        ]
       }
     }
   },

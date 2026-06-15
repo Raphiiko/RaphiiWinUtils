@@ -7,11 +7,10 @@ export interface AudioModeSummary {
   name: string;
   outputDeviceName: string;
   micInputSlot: string;
-  micInputChannel: number;
+  micRoutes: Array<{ inputChannel: number; outputChannel: number }>;
 }
 
 export class AudioModeService {
-  private readonly matrixClient: VbanTextClient;
   private readonly log: Logger;
 
   constructor(
@@ -19,7 +18,6 @@ export class AudioModeService {
     logger: Logger
   ) {
     this.log = logger.child("audio-modes");
-    this.matrixClient = new VbanTextClient(config.matrix, this.log);
   }
 
   listModes(): AudioModeSummary[] {
@@ -28,7 +26,7 @@ export class AudioModeService {
       name: mode.name,
       outputDeviceName: mode.outputDeviceName,
       micInputSlot: mode.micInputSlot,
-      micInputChannel: mode.micInputChannel
+      micRoutes: mode.micRoutes
     }));
   }
 
@@ -42,14 +40,30 @@ export class AudioModeService {
       throw new UnknownAudioModeError(id);
     }
 
-    const command = this.buildModeCommand(mode);
-    await this.matrixClient.send(command);
+    const [outputCommand, resetCommand, routeCommand] = this.buildModeCommands(mode);
+    if (!outputCommand || !resetCommand || !routeCommand) {
+      throw new Error(
+        `Invalid audio mode commands: ${JSON.stringify({
+          outputCommand,
+          resetCommand,
+          routeCommand,
+          mode
+        })}`
+      );
+    }
+
+    await this.sendMatrixCommand(outputCommand);
+    await delay(750);
+    await this.sendMatrixCommand(resetCommand);
+    await delay(50);
+    await this.sendMatrixCommand(routeCommand);
 
     this.log.info("Audio mode applied", {
       id,
       name: mode.name,
       outputDeviceName: mode.outputDeviceName,
-      micInputSlot: mode.micInputSlot
+      micInputSlot: mode.micInputSlot,
+      micRoutes: mode.micRoutes
     });
 
     return {
@@ -57,39 +71,45 @@ export class AudioModeService {
       name: mode.name,
       outputDeviceName: mode.outputDeviceName,
       micInputSlot: mode.micInputSlot,
-      micInputChannel: mode.micInputChannel
+      micRoutes: mode.micRoutes
     };
   }
 
   stop(): void {
-    void this.matrixClient.close();
+    // Mode commands use short-lived VBAN sockets.
   }
 
-  private buildModeCommand(mode: AudioModeConfig): string {
-    const commands = [
+  private buildModeCommands(mode: AudioModeConfig): [string, string, string] {
+    const outputCommands = [
       `Slot(${this.config.audioModes.mainOutputSlot}).Device.WDM = "${escapeMatrixString(
         mode.outputDeviceName
       )}"`,
       `Slot(${this.config.audioModes.mainOutputSlot}).Online = 1`
     ];
 
-    for (const inputSlot of this.config.audioModes.micInputSlotsToClear) {
-      for (const inputChannel of this.config.audioModes.micSourceChannelsToClear) {
-        for (const outputChannel of this.config.audioModes.micOutputChannels) {
-          commands.push(
-            `Point(${inputSlot}[${inputChannel}], ${this.config.audioModes.micMixOutputSlot}[${outputChannel}]).Remove`
-          );
-        }
-      }
+    const routeCommands = [];
+    for (const route of mode.micRoutes) {
+      const point = `Point(${mode.micInputSlot}[${route.inputChannel}],${this.config.audioModes.micMixOutputSlot}.OUT[${route.outputChannel}])`;
+      routeCommands.push(`${point}.dBGain = 0.0`);
+      routeCommands.push(`${point}.Mute = 0`);
     }
 
-    for (const outputChannel of this.config.audioModes.micOutputChannels) {
-      const point = `Point(${mode.micInputSlot}[${mode.micInputChannel}], ${this.config.audioModes.micMixOutputSlot}[${outputChannel}])`;
-      commands.push(`${point}.dBGain = 0.0`);
-      commands.push(`${point}.Mute = 0`);
-    }
+    return [
+      `${outputCommands.join(";")};`,
+      `Output(${this.config.audioModes.micMixOutputSlot}.OUT[${formatChannelRange(
+        this.config.audioModes.micOutputChannels
+      )}]).Reset;`,
+      `${routeCommands.join(";")};`
+    ];
+  }
 
-    return `${commands.join(";")};`;
+  private async sendMatrixCommand(command: string): Promise<void> {
+    const client = new VbanTextClient(this.config.matrix, this.log);
+    try {
+      await client.send(command);
+    } finally {
+      await client.close();
+    }
   }
 }
 
@@ -101,4 +121,21 @@ export class UnknownAudioModeError extends Error {
 
 function escapeMatrixString(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+}
+
+function formatChannelRange(channels: number[]): string {
+  const sorted = [...channels].sort((a, b) => a - b);
+  const first = sorted[0];
+  const last = sorted.at(-1);
+
+  if (first === undefined || last === undefined) {
+    throw new Error("At least one mic output channel is required");
+  }
+
+  const isContiguous = sorted.every((channel, index) => channel === first + index);
+  return isContiguous && sorted.length > 1 ? `${first}..${last}` : sorted.join(",");
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
