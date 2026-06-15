@@ -19,10 +19,16 @@ export class VbanTextClient {
 
   async send(command: string): Promise<void> {
     const packet = this.createPacket(command);
+    const socket = dgram.createSocket("udp4");
     await new Promise<void>((resolve, reject) => {
-      this.socket.send(packet, this.config.port, this.config.host, (error) => {
-        if (error) reject(error);
-        else resolve();
+      socket.send(packet, this.config.port, this.config.host, (error) => {
+        socket.close();
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
       });
     });
     this.log.debug("Sent Matrix command", { command });
