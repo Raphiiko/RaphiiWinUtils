@@ -1,6 +1,7 @@
 import { loadConfig } from "./config/loadConfig";
 import { Logger } from "./system/logger";
 import { Notifier } from "./system/notify";
+import { AudioModeService } from "./service/audioModeService";
 import { ChannelVolumeService } from "./service/channelVolumeService";
 import { ControlServer } from "./service/controlServer";
 import { Updater } from "./service/updater";
@@ -32,12 +33,14 @@ async function main(): Promise<void> {
   const service = new ChannelVolumeService(config, logger);
   service.start();
 
-  const controlServer = new ControlServer(config.control, updater, logger);
+  const audioModeService = new AudioModeService(config, logger);
+  const controlServer = new ControlServer(config.control, updater, audioModeService, logger);
   controlServer.start();
 
   const stop = () => {
     logger.info("Service stopping");
     controlServer.stop();
+    audioModeService.stop();
     service.stop();
     updater.stop();
     process.exit(0);

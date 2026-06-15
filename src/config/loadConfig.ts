@@ -27,6 +27,14 @@ function mergeConfig(base: AppConfig, override: Partial<AppConfig>): AppConfig {
       ...override.audio,
       channels: override.audio?.channels ?? base.audio.channels
     },
+    audioModes: {
+      ...base.audioModes,
+      ...override.audioModes,
+      modes: {
+        ...base.audioModes.modes,
+        ...override.audioModes?.modes
+      }
+    },
     updater: { ...base.updater, ...override.updater },
     control: { ...base.control, ...override.control },
     notifications: { ...base.notifications, ...override.notifications }

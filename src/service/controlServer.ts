@@ -1,6 +1,7 @@
 import { Elysia } from "elysia";
 import type { ControlConfig } from "../config/schema";
 import { Logger } from "../system/logger";
+import { AudioModeService, UnknownAudioModeError } from "./audioModeService";
 import type { Updater } from "./updater";
 
 export class ControlServer {
@@ -10,6 +11,7 @@ export class ControlServer {
   constructor(
     private readonly config: ControlConfig,
     private readonly updater: Updater,
+    private readonly audioModes: AudioModeService,
     logger: Logger
   ) {
     this.log = logger.child("control");
@@ -34,6 +36,33 @@ export class ControlServer {
           accepted,
           updater: this.updater.getStatus()
         };
+      })
+      .get("/audio/modes", () => ({
+        modes: this.audioModes.listModes()
+      }))
+      .post("/audio/modes/:id", async ({ params, set }) => {
+        try {
+          const mode = await this.audioModes.applyMode(params.id);
+          return {
+            applied: true,
+            mode
+          };
+        } catch (error) {
+          if (error instanceof UnknownAudioModeError) {
+            set.status = 404;
+            return {
+              applied: false,
+              error: error.message
+            };
+          }
+
+          set.status = 500;
+          this.log.error("Failed to apply audio mode", { error: String(error) });
+          return {
+            applied: false,
+            error: "Failed to apply audio mode"
+          };
+        }
       })
       .listen({
         hostname: this.config.host,
