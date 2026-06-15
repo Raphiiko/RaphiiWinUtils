@@ -168,7 +168,7 @@ export function notifyCompletedUpdateIfNeeded(
 
   let revision: string | undefined;
   try {
-    const completion = JSON.parse(readFileSync(marker, "utf8")) as Partial<{
+    const completion = JSON.parse(readFileSync(marker, "utf8").replace(/^\uFEFF/, "")) as Partial<{
       revision: string;
     }>;
     revision = completion.revision;
