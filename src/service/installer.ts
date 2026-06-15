@@ -5,7 +5,6 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync
 } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
@@ -48,7 +47,7 @@ export async function installLocal(config: AppConfig, logger: Logger): Promise<v
     });
   }
 
-  createWindowsShortcuts(installDir, config.notifications.appName);
+  registerWindowsIntegration(installDir, config.notifications.appName);
   await installPushUpdateHook(config, log);
   log.info("Install complete", { exe: join(installDir, "RaphiiWinUtils.exe") });
 }
@@ -66,8 +65,9 @@ export function copyBuildArtifacts(fromDir: string, installDir: string): void {
   }
 }
 
-function createWindowsShortcuts(installDir: string, appName: string): void {
+function registerWindowsIntegration(installDir: string, appName: string): void {
   const exePath = join(installDir, "RaphiiWinUtils.exe");
+  const launcherPath = writeLauncherScript(installDir);
   const snoreInstall = Bun.spawnSync([
     getSnoreToastPath(),
     "-install",
@@ -82,6 +82,23 @@ function createWindowsShortcuts(installDir: string, appName: string): void {
     );
   }
 
+  removeStartupShortcut(appName);
+  registerLogonTask(installDir, appName, launcherPath);
+}
+
+export function writeLauncherScript(installDir: string): string {
+  const exePath = join(installDir, "RaphiiWinUtils.exe");
+  const launcherPath = join(installDir, "RaphiiWinUtils.launch.vbs");
+  const script = [
+    'Set shell = CreateObject("WScript.Shell")',
+    `shell.CurrentDirectory = "${vbs(installDir)}"`,
+    `shell.Run """${vbs(exePath)}"" run", 0, False`
+  ].join("\r\n");
+  writeFileSync(launcherPath, `${script}\r\n`, "utf8");
+  return launcherPath;
+}
+
+function removeStartupShortcut(appName: string): void {
   const startupDir = join(
     process.env.APPDATA ?? "",
     "Microsoft",
@@ -90,24 +107,25 @@ function createWindowsShortcuts(installDir: string, appName: string): void {
     "Programs",
     "Startup"
   );
-  if (!startupDir) throw new Error("APPDATA is not available; cannot create Startup shortcut");
-
-  if (!existsSync(startupDir)) {
-    mkdirSync(startupDir, { recursive: true });
-  } else if (!statSync(startupDir).isDirectory()) {
-    throw new Error(`Startup path exists but is not a directory: ${startupDir}`);
-  }
-
   const startupShortcutPath = join(startupDir, `${appName}.lnk`);
+  rmSync(startupShortcutPath, { force: true });
+}
+
+function registerLogonTask(installDir: string, appName: string, launcherPath: string): void {
   const script = [
-    "$shell = New-Object -ComObject WScript.Shell",
-    `$shortcut = $shell.CreateShortcut("${ps(startupShortcutPath)}")`,
-    `$shortcut.TargetPath = "${ps(exePath)}"`,
-    `$shortcut.WorkingDirectory = "${ps(installDir)}"`,
-    "$shortcut.Save()"
+    "$ErrorActionPreference = 'Stop'",
+    `$taskName = "${ps(appName)}"`,
+    `$launcherPath = "${ps(launcherPath)}"`,
+    `$installDir = "${ps(installDir)}"`,
+    "$user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name",
+    '$action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ("//B //Nologo `"" + $launcherPath + "`"") -WorkingDirectory $installDir',
+    "$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user",
+    "$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited",
+    "$settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Seconds 0)",
+    `Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description "${ps(appName)} background service" -Force | Out-Null`
   ].join("; ");
 
-  const startupResult = Bun.spawnSync([
+  const taskResult = Bun.spawnSync([
     "powershell.exe",
     "-NoProfile",
     "-ExecutionPolicy",
@@ -115,9 +133,9 @@ function createWindowsShortcuts(installDir: string, appName: string): void {
     "-Command",
     script
   ]);
-  if (startupResult.exitCode !== 0) {
+  if (taskResult.exitCode !== 0) {
     throw new Error(
-      `Failed to create Startup shortcut: ${new TextDecoder().decode(startupResult.stderr)}`
+      `Failed to register logon task: ${new TextDecoder().decode(taskResult.stderr)}`
     );
   }
 }
@@ -207,4 +225,8 @@ function escapeRegExp(value: string): string {
 
 function ps(value: string): string {
   return value.replace(/`/g, "``").replace(/"/g, '`"');
+}
+
+function vbs(value: string): string {
+  return value.replace(/"/g, '""');
 }

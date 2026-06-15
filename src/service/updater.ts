@@ -6,6 +6,7 @@ import { Logger } from "../system/logger";
 import { getRuntimeRoot } from "../system/paths";
 import { requireSuccess, runCommand } from "../system/process";
 import type { Notifier } from "../system/notify";
+import { writeLauncherScript } from "./installer";
 
 interface UpdateCheckRequest {
   reason: string;
@@ -232,6 +233,7 @@ function getUpdateCompletedMarkerPath(installDir: string): string {
 function stageAndRestart(sourceDir: string, installDir: string, revision: string): void {
   const distDir = join(sourceDir, "dist");
   const scriptPath = join(installDir, "apply-update.ps1");
+  const launcherPath = writeLauncherScript(installDir);
   const logPath = join(
     process.env.APPDATA ?? join(process.env.USERPROFILE ?? ".", "AppData", "Roaming"),
     "RaphiiWinUtils",
@@ -244,6 +246,7 @@ function stageAndRestart(sourceDir: string, installDir: string, revision: string
     `$dist = "${ps(distDir)}"`,
     `$install = "${ps(installDir)}"`,
     `$revision = "${ps(revision)}"`,
+    `$launcherPath = "${ps(launcherPath)}"`,
     `$logPath = "${ps(logPath)}"`,
     `$completionMarker = "${ps(getUpdateCompletedMarkerPath(installDir))}"`,
     "New-Item -ItemType Directory -Path (Split-Path -Parent $logPath) -Force | Out-Null",
@@ -261,7 +264,7 @@ function stageAndRestart(sourceDir: string, installDir: string, revision: string
     "  Set-Content -LiteralPath (Join-Path $install '.deployed-revision') -Value $revision -Encoding UTF8",
     "  @{ revision = $revision; completedAt = (Get-Date).ToString('o') } | ConvertTo-Json -Compress | Set-Content -LiteralPath $completionMarker -Encoding UTF8",
     '  Write-UpdateLog "Starting updated service at revision $revision"',
-    "  Start-Process -FilePath (Join-Path $install 'RaphiiWinUtils.exe') -WorkingDirectory $install -WindowStyle Hidden",
+    "  Start-Process -FilePath 'wscript.exe' -ArgumentList @('//B', '//Nologo', $launcherPath) -WorkingDirectory $install -WindowStyle Hidden",
     "  Write-UpdateLog 'Update handoff complete'",
     "} catch {",
     "  Write-UpdateLog ('Update handoff failed: ' + $_.Exception.ToString())",
