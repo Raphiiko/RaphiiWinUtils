@@ -1,7 +1,8 @@
-import { Subscription, tap } from "rxjs";
+import { Subscription, interval, tap } from "rxjs";
 import type { AppConfig } from "../config/schema";
 import { AudioEndpointWatcher } from "../audio/audioEndpointWatcher";
 import { mapEndpointsToChannels } from "../audio/channelMapper";
+import type { ChannelState } from "../audio/types";
 import { VbanTextClient } from "../matrix/vbanTextClient";
 import { MatrixPresetSync } from "../matrix/matrixPresetSync";
 import { Logger } from "../system/logger";
@@ -25,6 +26,7 @@ export class ChannelVolumeService {
 
     const endpoints$ = watcher.watch();
     const seenEndpoints = new Set<string>();
+    const latestChannelStates = new Map<number, ChannelState>();
 
     this.subscriptions.add(
       endpoints$
@@ -47,12 +49,25 @@ export class ChannelVolumeService {
 
     this.subscriptions.add(
       mapEndpointsToChannels(endpoints$, this.config.audio).subscribe({
-        next: (state) => matrixSync.sync(state),
+        next: (state) => {
+          latestChannelStates.set(state.presetPatch, state);
+          matrixSync.sync(state);
+        },
         error: (error) => {
           this.log.error("Channel volume service failed", { error: String(error) });
         }
       })
     );
+
+    if (this.config.matrix.resyncEveryMs > 0) {
+      this.subscriptions.add(
+        interval(this.config.matrix.resyncEveryMs).subscribe(() => {
+          for (const state of latestChannelStates.values()) {
+            matrixSync.sync(state, { force: true });
+          }
+        })
+      );
+    }
   }
 
   stop(): void {

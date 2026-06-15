@@ -11,8 +11,13 @@ import type { ChannelState } from "../audio/types";
 import { Logger } from "../system/logger";
 import { VbanTextClient } from "./vbanTextClient";
 
+interface MatrixSyncUpdate {
+  state: ChannelState;
+  force: boolean;
+}
+
 export class MatrixPresetSync {
-  private readonly updates$ = new Subject<ChannelState>();
+  private readonly updates$ = new Subject<MatrixSyncUpdate>();
   private readonly log: Logger;
 
   constructor(
@@ -25,13 +30,17 @@ export class MatrixPresetSync {
   start(): void {
     this.updates$
       .pipe(
-        groupBy((state) => state.presetPatch),
+        groupBy((update) => update.state.presetPatch),
         mergeMap((group$) =>
           group$.pipe(
-            distinctUntilChanged((a, b) => a.gainDb === b.gainDb && a.muted === b.muted),
+            distinctUntilChanged(
+              (a, b) =>
+                !b.force && a.state.gainDb === b.state.gainDb && a.state.muted === b.state.muted
+            ),
             throttleTime(10, asyncScheduler, { leading: true, trailing: true }),
-            map((state) => ({
+            map(({ state, force }) => ({
               state,
+              force,
               command: [
                 `PresetPatch[${state.presetPatch}].Gain = ${state.gainDb.toFixed(1)};`,
                 `PresetPatch[${state.presetPatch}].Mute = ${state.muted ? 1 : 0};`
@@ -41,7 +50,7 @@ export class MatrixPresetSync {
         )
       )
       .subscribe({
-        next: ({ state, command }) => {
+        next: ({ state, force, command }) => {
           void this.client
             .send(command)
             .then(() => {
@@ -50,7 +59,8 @@ export class MatrixPresetSync {
                 presetPatch: state.presetPatch,
                 volumePercent: state.endpoint.volumePercent,
                 gainDb: state.gainDb,
-                muted: state.muted
+                muted: state.muted,
+                force
               });
             })
             .catch((error) => {
@@ -66,7 +76,7 @@ export class MatrixPresetSync {
       });
   }
 
-  sync(state: ChannelState): void {
-    this.updates$.next(state);
+  sync(state: ChannelState, options: { force?: boolean } = {}): void {
+    this.updates$.next({ state, force: options.force ?? false });
   }
 }

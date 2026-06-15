@@ -10,6 +10,7 @@ export interface MatrixConfig {
   host: string;
   port: number;
   streamName: string;
+  resyncEveryMs: number;
 }
 
 export interface AudioConfig {
@@ -49,7 +50,8 @@ export const defaultConfig: AppConfig = {
   matrix: {
     host: "127.0.0.1",
     port: 6980,
-    streamName: "Command1"
+    streamName: "Command1",
+    resyncEveryMs: 5000
   },
   audio: {
     pollMs: 1000,

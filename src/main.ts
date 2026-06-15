@@ -24,7 +24,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  notifier.send("RaphiiWinUtils started", "Watching audio channel controls.");
   logger.info("Service starting");
 
   const updater = new Updater(config.updater, notifier, logger);
