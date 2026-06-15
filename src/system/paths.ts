@@ -13,10 +13,21 @@ export function getRuntimeRoot(): string {
 }
 
 export function getHelperPath(): string {
-  const runtimeHelper = join(getRuntimeRoot(), "helpers", "AudioEndpointWatcher", "AudioEndpointWatcher.exe");
+  const runtimeHelper = join(
+    getRuntimeRoot(),
+    "helpers",
+    "AudioEndpointWatcher",
+    "AudioEndpointWatcher.exe"
+  );
   if (existsSync(runtimeHelper)) return runtimeHelper;
 
-  const devHelper = join(process.cwd(), "dist", "helpers", "AudioEndpointWatcher", "AudioEndpointWatcher.exe");
+  const devHelper = join(
+    process.cwd(),
+    "dist",
+    "helpers",
+    "AudioEndpointWatcher",
+    "AudioEndpointWatcher.exe"
+  );
   if (existsSync(devHelper)) return devHelper;
 
   return runtimeHelper;

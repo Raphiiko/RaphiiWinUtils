@@ -4,8 +4,8 @@ await rcedit("./dist/RaphiiWinUtils.exe", {
   "version-string": {
     FileDescription: "Raphii's Windows Utilities",
     ProductName: "Raphii's Windows Utilities",
-    InternalName: "RaphiiWinUtils",
+    InternalFilename: "RaphiiWinUtils",
     OriginalFilename: "RaphiiWinUtils.exe",
-    CompanyName: "Raphiiko",
-  },
+    CompanyName: "Raphiiko"
+  }
 });

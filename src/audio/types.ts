@@ -1,7 +1,7 @@
 export interface AudioEndpointState {
   id: string;
   name: string;
-  dataFlow: "Render" | "Capture" | string;
+  dataFlow: string;
   volumeScalar: number;
   volumePercent: number;
   muted: boolean;

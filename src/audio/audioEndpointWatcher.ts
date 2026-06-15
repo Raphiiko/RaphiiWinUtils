@@ -59,7 +59,8 @@ export class AudioEndpointWatcher {
 
         for (const endpoint of endpoints) {
           const recentEventAt = lastEventAt.get(endpoint.id);
-          const hasRecentEvent = recentEventAt !== undefined && now - recentEventAt < recentEventProtectionMs;
+          const hasRecentEvent =
+            recentEventAt !== undefined && now - recentEventAt < recentEventProtectionMs;
           const current = latest.get(endpoint.id);
 
           if (hasRecentEvent && current && !sameEndpointState(current, endpoint)) {
@@ -123,7 +124,9 @@ export class AudioEndpointWatcher {
 
       this.child.on("exit", (code, signal) => {
         if (!subscriber.closed) {
-          subscriber.error(new Error(`Audio watcher exited with code ${code ?? "null"} signal ${signal ?? "null"}`));
+          subscriber.error(
+            new Error(`Audio watcher exited with code ${code ?? "null"} signal ${signal ?? "null"}`)
+          );
         }
       });
 
@@ -136,9 +139,11 @@ export class AudioEndpointWatcher {
 }
 
 function sameEndpointState(a: AudioEndpointState, b: AudioEndpointState): boolean {
-  return a.id === b.id &&
+  return (
+    a.id === b.id &&
     a.name === b.name &&
     a.dataFlow === b.dataFlow &&
     Math.abs(a.volumeScalar - b.volumeScalar) < volumeEpsilon &&
-    a.muted === b.muted;
+    a.muted === b.muted
+  );
 }

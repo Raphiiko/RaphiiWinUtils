@@ -46,13 +46,12 @@ export class ChannelVolumeService {
     );
 
     this.subscriptions.add(
-      mapEndpointsToChannels(endpoints$, this.config.audio)
-        .subscribe({
-          next: (state) => matrixSync.sync(state),
-          error: (error) => {
-            this.log.error("Channel volume service failed", { error: String(error) });
-          }
-        })
+      mapEndpointsToChannels(endpoints$, this.config.audio).subscribe({
+        next: (state) => matrixSync.sync(state),
+        error: (error) => {
+          this.log.error("Channel volume service failed", { error: String(error) });
+        }
+      })
     );
   }
 

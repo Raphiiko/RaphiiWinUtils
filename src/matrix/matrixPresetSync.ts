@@ -18,34 +18,39 @@ export class MatrixPresetSync {
     this.updates$
       .pipe(
         groupBy((state) => state.presetPatch),
-        mergeMap((group$) => group$.pipe(
-          debounceTime(25),
-          distinctUntilChanged((a, b) => a.gainDb === b.gainDb && a.muted === b.muted),
-          map((state) => ({
-            state,
-            command: [
-              `PresetPatch[${state.presetPatch}].Gain = ${state.gainDb.toFixed(1)};`,
-              `PresetPatch[${state.presetPatch}].Mute = ${state.muted ? 1 : 0};`
-            ].join("\n")
-          }))
-        ))
+        mergeMap((group$) =>
+          group$.pipe(
+            debounceTime(25),
+            distinctUntilChanged((a, b) => a.gainDb === b.gainDb && a.muted === b.muted),
+            map((state) => ({
+              state,
+              command: [
+                `PresetPatch[${state.presetPatch}].Gain = ${state.gainDb.toFixed(1)};`,
+                `PresetPatch[${state.presetPatch}].Mute = ${state.muted ? 1 : 0};`
+              ].join("\n")
+            }))
+          )
+        )
       )
       .subscribe({
         next: ({ state, command }) => {
-          void this.client.send(command).then(() => {
-            this.log.info("Synced channel to Matrix", {
-              channel: state.channelName,
-              presetPatch: state.presetPatch,
-              volumePercent: state.endpoint.volumePercent,
-              gainDb: state.gainDb,
-              muted: state.muted
+          void this.client
+            .send(command)
+            .then(() => {
+              this.log.info("Synced channel to Matrix", {
+                channel: state.channelName,
+                presetPatch: state.presetPatch,
+                volumePercent: state.endpoint.volumePercent,
+                gainDb: state.gainDb,
+                muted: state.muted
+              });
+            })
+            .catch((error) => {
+              this.log.error("Failed to sync channel to Matrix", {
+                channel: state.channelName,
+                error: String(error)
+              });
             });
-          }).catch((error) => {
-            this.log.error("Failed to sync channel to Matrix", {
-              channel: state.channelName,
-              error: String(error)
-            });
-          });
         },
         error: (error) => {
           this.log.error("Matrix sync stream failed", { error: String(error) });

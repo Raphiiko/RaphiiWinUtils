@@ -16,18 +16,14 @@ export class Notifier {
   send(title: string, body: string): void {
     if (!this.config.enabled) return;
 
-    const child = spawn(getSnoreToastPath(), [
-      "-appID",
-      "Raphiiko.RaphiiWinUtils",
-      "-t",
-      title,
-      "-m",
-      body,
-      "-silent"
-    ], {
-      windowsHide: true,
-      stdio: ["ignore", "ignore", "pipe"]
-    });
+    const child = spawn(
+      getSnoreToastPath(),
+      ["-appID", "Raphiiko.RaphiiWinUtils", "-t", title, "-m", body, "-silent"],
+      {
+        windowsHide: true,
+        stdio: ["ignore", "ignore", "pipe"]
+      }
+    );
 
     child.stderr.on("data", (chunk: Buffer) => {
       this.log.warn("SnoreToast stderr", { message: chunk.toString("utf8").trim() });

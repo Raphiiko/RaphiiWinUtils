@@ -23,11 +23,11 @@ export async function runCommand(
     let settled = false;
     const timeout = options.timeoutMs
       ? setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        child.kill();
-        reject(new Error(`Command timed out: ${command} ${args.join(" ")}`));
-      }, options.timeoutMs)
+          if (settled) return;
+          settled = true;
+          child.kill();
+          reject(new Error(`Command timed out: ${command} ${args.join(" ")}`));
+        }, options.timeoutMs)
       : undefined;
 
     child.stdout.on("data", (chunk: Buffer) => {
@@ -61,11 +61,15 @@ export async function requireSuccess(
 ): Promise<CommandResult> {
   const result = await runCommand(command, args, options);
   if (result.code !== 0) {
-    throw new Error([
-      `Command failed with code ${result.code}: ${command} ${args.join(" ")}`,
-      result.stdout.trim(),
-      result.stderr.trim()
-    ].filter(Boolean).join("\n"));
+    throw new Error(
+      [
+        `Command failed with code ${result.code}: ${command} ${args.join(" ")}`,
+        result.stdout.trim(),
+        result.stderr.trim()
+      ]
+        .filter(Boolean)
+        .join("\n")
+    );
   }
 
   return result;

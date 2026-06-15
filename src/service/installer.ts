@@ -1,4 +1,13 @@
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import type { AppConfig } from "../config/schema";
 import { Logger } from "../system/logger";
@@ -26,10 +35,16 @@ export async function installLocal(config: AppConfig, logger: Logger): Promise<v
 
   if (!existsSync(sourceDir)) {
     log.info("Cloning self-update source", { sourceDir });
-    await requireSuccess("git", ["clone", "--branch", config.updater.branch, config.updater.repoUrl, sourceDir], {
-      timeoutMs: 120_000
-    }).catch((error) => {
-      log.warn("Could not clone update source yet; install still deployed current build", { error: String(error) });
+    await requireSuccess(
+      "git",
+      ["clone", "--branch", config.updater.branch, config.updater.repoUrl, sourceDir],
+      {
+        timeoutMs: 120_000
+      }
+    ).catch((error) => {
+      log.warn("Could not clone update source yet; install still deployed current build", {
+        error: String(error)
+      });
     });
   }
 
@@ -62,7 +77,9 @@ function createWindowsShortcuts(installDir: string, appName: string): void {
   ]);
 
   if (snoreInstall.exitCode !== 0) {
-    throw new Error(`Failed to register notification shortcut: ${new TextDecoder().decode(snoreInstall.stderr)}`);
+    throw new Error(
+      `Failed to register notification shortcut: ${new TextDecoder().decode(snoreInstall.stderr)}`
+    );
   }
 
   const startupDir = join(
@@ -90,15 +107,26 @@ function createWindowsShortcuts(installDir: string, appName: string): void {
     "$shortcut.Save()"
   ].join("; ");
 
-  const startupResult = Bun.spawnSync(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script]);
+  const startupResult = Bun.spawnSync([
+    "powershell.exe",
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    script
+  ]);
   if (startupResult.exitCode !== 0) {
-    throw new Error(`Failed to create Startup shortcut: ${new TextDecoder().decode(startupResult.stderr)}`);
+    throw new Error(
+      `Failed to create Startup shortcut: ${new TextDecoder().decode(startupResult.stderr)}`
+    );
   }
 }
 
 async function writeDeployedRevision(installDir: string, log: Logger): Promise<void> {
   try {
-    const revision = (await requireSuccess("git", ["rev-parse", "HEAD"], { cwd: process.cwd() })).stdout.trim();
+    const revision = (
+      await requireSuccess("git", ["rev-parse", "HEAD"], { cwd: process.cwd() })
+    ).stdout.trim();
     writeFileSync(join(installDir, ".deployed-revision"), `${revision}\n`, "utf8");
   } catch (error) {
     log.warn("Could not write deployed revision marker", { error: String(error) });
@@ -112,9 +140,11 @@ async function installPostPushHook(config: AppConfig, log: Logger): Promise<void
   }
 
   try {
-    const hookPath = (await requireSuccess("git", ["rev-parse", "--git-path", "hooks/post-push"], {
-      cwd: process.cwd()
-    })).stdout.trim();
+    const hookPath = (
+      await requireSuccess("git", ["rev-parse", "--git-path", "hooks/post-push"], {
+        cwd: process.cwd()
+      })
+    ).stdout.trim();
     const absoluteHookPath = isAbsolute(hookPath) ? hookPath : join(process.cwd(), hookPath);
     const endpoint = `http://${config.control.host}:${config.control.port}/update/check`;
     const begin = "# BEGIN RaphiiWinUtils update check";
@@ -126,9 +156,14 @@ async function installPostPushHook(config: AppConfig, log: Logger): Promise<void
     ].join("\n");
 
     mkdirSync(dirname(absoluteHookPath), { recursive: true });
-    const existing = existsSync(absoluteHookPath) ? readFileSync(absoluteHookPath, "utf8") : "#!/bin/sh\n";
+    const existing = existsSync(absoluteHookPath)
+      ? readFileSync(absoluteHookPath, "utf8")
+      : "#!/bin/sh\n";
     const withoutOldBlock = existing
-      .replace(new RegExp(`\\n?${escapeRegExp(begin)}[\\s\\S]*?${escapeRegExp(end)}\\n?`, "m"), "\n")
+      .replace(
+        new RegExp(`\\n?${escapeRegExp(begin)}[\\s\\S]*?${escapeRegExp(end)}\\n?`, "m"),
+        "\n"
+      )
       .trimEnd();
     writeFileSync(absoluteHookPath, `${withoutOldBlock}\n\n${block}\n`, "utf8");
     chmodSync(absoluteHookPath, 0o755);
@@ -143,5 +178,5 @@ function escapeRegExp(value: string): string {
 }
 
 function ps(value: string): string {
-  return value.replace(/`/g, "``").replace(/"/g, "`\"");
+  return value.replace(/`/g, "``").replace(/"/g, '`"');
 }

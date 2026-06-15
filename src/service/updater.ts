@@ -113,8 +113,15 @@ export class Updater {
         this.log.warn("Update source is not available yet; skipping update check");
         return;
       }
-      await requireSuccess("git", ["fetch", "origin", this.config.branch], { cwd: sourceDir, timeoutMs: 120_000 });
-      const remote = (await requireSuccess("git", ["rev-parse", `origin/${this.config.branch}`], { cwd: sourceDir })).stdout.trim();
+      await requireSuccess("git", ["fetch", "origin", this.config.branch], {
+        cwd: sourceDir,
+        timeoutMs: 120_000
+      });
+      const remote = (
+        await requireSuccess("git", ["rev-parse", `origin/${this.config.branch}`], {
+          cwd: sourceDir
+        })
+      ).stdout.trim();
       const deployed = readDeployedRevision(this.config.installDir);
 
       if (deployed === remote) {
@@ -126,11 +133,17 @@ export class Updater {
       this.lastCheckResult = "update-available";
       this.notifier.send("RaphiiWinUtils", "Update found. Building new version.");
       this.log.info("Update available", { deployed, remote });
-      await requireSuccess("git", ["reset", "--hard", `origin/${this.config.branch}`], { cwd: sourceDir, timeoutMs: 60_000 });
-      await requireSuccess("bun", ["install", "--frozen-lockfile"], { cwd: sourceDir, timeoutMs: 120_000 });
+      await requireSuccess("git", ["reset", "--hard", `origin/${this.config.branch}`], {
+        cwd: sourceDir,
+        timeoutMs: 60_000
+      });
+      await requireSuccess("bun", ["install", "--frozen-lockfile"], {
+        cwd: sourceDir,
+        timeoutMs: 120_000
+      });
       await requireSuccess("bun", ["run", "build:all"], { cwd: sourceDir, timeoutMs: 180_000 });
 
-      await stageAndRestart(sourceDir, this.config.installDir, remote);
+      stageAndRestart(sourceDir, this.config.installDir, remote);
     } catch (error) {
       this.lastCheckResult = "failed";
       this.log.error("Update check failed", { error: String(error) });
@@ -158,9 +171,13 @@ async function ensureSourceClone(config: UpdaterConfig, sourceDir: string): Prom
   }
 
   mkdirSync(config.installDir, { recursive: true });
-  const result = await runCommand("git", ["clone", "--branch", config.branch, config.repoUrl, sourceDir], {
-    timeoutMs: 120_000
-  });
+  const result = await runCommand(
+    "git",
+    ["clone", "--branch", config.branch, config.repoUrl, sourceDir],
+    {
+      timeoutMs: 120_000
+    }
+  );
   if (result.code !== 0) {
     return false;
   }
@@ -175,7 +192,7 @@ function readDeployedRevision(installDir: string): string | undefined {
   return revision || undefined;
 }
 
-async function stageAndRestart(sourceDir: string, installDir: string, revision: string): Promise<void> {
+function stageAndRestart(sourceDir: string, installDir: string, revision: string): void {
   const distDir = join(sourceDir, "dist");
   const scriptPath = join(installDir, "apply-update.ps1");
   const logPath = join(
@@ -194,7 +211,7 @@ async function stageAndRestart(sourceDir: string, installDir: string, revision: 
     "New-Item -ItemType Directory -Path (Split-Path -Parent $logPath) -Force | Out-Null",
     "function Write-UpdateLog([string]$message) { Add-Content -LiteralPath $logPath -Value ((Get-Date).ToString('o') + ' ' + $message) }",
     "try {",
-    "  Write-UpdateLog \"Waiting for process $pidToWait\"",
+    '  Write-UpdateLog "Waiting for process $pidToWait"',
     "  Wait-Process -Id $pidToWait -Timeout 30 -ErrorAction SilentlyContinue",
     "  Start-Sleep -Milliseconds 500",
     "  Write-UpdateLog 'Copying executable'",
@@ -204,7 +221,7 @@ async function stageAndRestart(sourceDir: string, installDir: string, revision: 
     "  if (Test-Path -LiteralPath $helpers) { Remove-Item -LiteralPath $helpers -Recurse -Force }",
     "  Copy-Item -LiteralPath (Join-Path $dist 'helpers') -Destination $helpers -Recurse -Force",
     "  Set-Content -LiteralPath (Join-Path $install '.deployed-revision') -Value $revision -Encoding UTF8",
-    "  Write-UpdateLog \"Starting updated service at revision $revision\"",
+    '  Write-UpdateLog "Starting updated service at revision $revision"',
     "  Start-Process -FilePath (Join-Path $install 'RaphiiWinUtils.exe') -WorkingDirectory $install -WindowStyle Hidden",
     "  Write-UpdateLog 'Update handoff complete'",
     "} catch {",
@@ -222,18 +239,14 @@ async function stageAndRestart(sourceDir: string, installDir: string, revision: 
     "Start-Process -FilePath 'powershell.exe' -ArgumentList $args -WindowStyle Hidden"
   ].join("; ");
 
-  const launch = Bun.spawnSync([
-    "powershell.exe",
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-Command",
-    launchCommand
-  ], {
-    windowsHide: true,
-    stdout: "pipe",
-    stderr: "pipe"
-  });
+  const launch = Bun.spawnSync(
+    ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", launchCommand],
+    {
+      windowsHide: true,
+      stdout: "pipe",
+      stderr: "pipe"
+    }
+  );
 
   if (launch.exitCode !== 0) {
     const stderr = new TextDecoder().decode(launch.stderr);
@@ -245,5 +258,5 @@ async function stageAndRestart(sourceDir: string, installDir: string, revision: 
 }
 
 function ps(value: string): string {
-  return value.replace(/`/g, "``").replace(/"/g, "`\"");
+  return value.replace(/`/g, "``").replace(/"/g, '`"');
 }
