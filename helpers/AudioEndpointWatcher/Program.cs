@@ -4,8 +4,16 @@ using System.Text.Json.Serialization;
 using NAudio.CoreAudioApi;
 
 var pollMs = ParsePollMs(args);
-using var watcher = new EndpointWatcher(pollMs);
-watcher.Run();
+try
+{
+    using var watcher = new EndpointWatcher(pollMs);
+    watcher.Run();
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine(ex);
+    Environment.ExitCode = 1;
+}
 
 static int ParsePollMs(string[] args)
 {
@@ -40,7 +48,7 @@ internal sealed class EndpointWatcher : IDisposable
 
     public void Run()
     {
-        SubscribeAll();
+        SafeSubscribeAll();
         Write(new { type = "ready" });
         SafeSnapshot("snapshot");
         pollTimer.Change(pollMs, pollMs);
@@ -67,8 +75,15 @@ internal sealed class EndpointWatcher : IDisposable
 
             var callback = new AudioEndpointVolumeNotificationDelegate(data =>
             {
-                var endpoint = EndpointState.FromNotification(device, data, "event");
-                Write(new { type = "endpoint", endpoint });
+                try
+                {
+                    var endpoint = EndpointState.FromNotification(device, data, "event");
+                    Write(new { type = "endpoint", endpoint });
+                }
+                catch (Exception ex)
+                {
+                    Write(new { type = "error", message = ex.ToString() });
+                }
             });
 
             device.AudioEndpointVolume.OnVolumeNotification += callback;
@@ -76,11 +91,23 @@ internal sealed class EndpointWatcher : IDisposable
         }
     }
 
-    private void SafeSnapshot(string source)
+    private void SafeSubscribeAll()
     {
         try
         {
             SubscribeAll();
+        }
+        catch (Exception ex)
+        {
+            Write(new { type = "error", message = ex.ToString() });
+        }
+    }
+
+    private void SafeSnapshot(string source)
+    {
+        try
+        {
+            SafeSubscribeAll();
             var endpoints = EnumerateRenderDevices()
                 .Select(device =>
                 {

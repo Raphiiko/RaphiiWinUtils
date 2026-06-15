@@ -44,7 +44,11 @@ export class ChannelVolumeService {
             }
           })
         )
-        .subscribe()
+        .subscribe({
+          error: (error) => {
+            this.log.error("Audio endpoint logging stream failed", { error: String(error) });
+          }
+        })
     );
 
     this.subscriptions.add(

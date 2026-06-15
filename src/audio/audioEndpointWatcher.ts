@@ -6,6 +6,7 @@ import { getHelperPath } from "../system/paths";
 import { Logger } from "../system/logger";
 
 const recentEventProtectionMs = 2500;
+const restartDelayMs = 1000;
 const volumeEpsilon = 0.00001;
 
 export class AudioEndpointWatcher {
@@ -21,18 +22,9 @@ export class AudioEndpointWatcher {
 
   watch(): Observable<AudioEndpointState[]> {
     return new Observable<AudioEndpointState[]>((subscriber) => {
-      const helperPath = getHelperPath();
-      if (!existsSync(helperPath)) {
-        subscriber.error(new Error(`Audio helper not found: ${helperPath}`));
-        return;
-      }
-
-      this.child = spawn(helperPath, [`--poll-ms=${this.pollMs}`], {
-        windowsHide: true,
-        stdio: ["pipe", "pipe", "pipe"]
-      });
-
       let buffer = "";
+      let restartTimer: ReturnType<typeof setTimeout> | undefined;
+      let stopping = false;
       const latest = new Map<string, AudioEndpointState>();
       const lastEventAt = new Map<string, number>();
 
@@ -88,49 +80,79 @@ export class AudioEndpointWatcher {
         if (changed) subscriber.next([...latest.values()]);
       };
 
-      this.child.stdout.on("data", (chunk: Buffer) => {
-        buffer += chunk.toString("utf8");
-        let newlineIndex = buffer.indexOf("\n");
-        while (newlineIndex >= 0) {
-          const line = buffer.slice(0, newlineIndex).trim();
-          buffer = buffer.slice(newlineIndex + 1);
-          newlineIndex = buffer.indexOf("\n");
-          if (!line) continue;
+      const scheduleRestart = (reason: Record<string, unknown>) => {
+        if (stopping || subscriber.closed || restartTimer) return;
 
-          try {
-            const message = JSON.parse(line) as AudioWatcherMessage;
-            if (message.type === "ready") {
-              this.log.info("Audio endpoint watcher ready");
-            } else if (message.type === "snapshot" && message.endpoints) {
-              publishSnapshot(message.endpoints);
-            } else if (message.type === "endpoint" && message.endpoint) {
-              publishEndpoint(message.endpoint);
-            } else if (message.type === "error") {
-              this.log.warn("Audio watcher reported an error", { message: message.message });
+        this.log.warn("Audio endpoint watcher stopped; restarting", {
+          restartDelayMs,
+          ...reason
+        });
+        restartTimer = setTimeout(() => {
+          restartTimer = undefined;
+          startChild();
+        }, restartDelayMs);
+      };
+
+      const startChild = () => {
+        const helperPath = getHelperPath();
+        if (!existsSync(helperPath)) {
+          scheduleRestart({ error: `Audio helper not found: ${helperPath}` });
+          return;
+        }
+
+        buffer = "";
+        const child = spawn(helperPath, [`--poll-ms=${this.pollMs}`], {
+          windowsHide: true,
+          stdio: ["pipe", "pipe", "pipe"]
+        });
+        this.child = child;
+
+        child.stdout.on("data", (chunk: Buffer) => {
+          buffer += chunk.toString("utf8");
+          let newlineIndex = buffer.indexOf("\n");
+          while (newlineIndex >= 0) {
+            const line = buffer.slice(0, newlineIndex).trim();
+            buffer = buffer.slice(newlineIndex + 1);
+            newlineIndex = buffer.indexOf("\n");
+            if (!line) continue;
+
+            try {
+              const message = JSON.parse(line) as AudioWatcherMessage;
+              if (message.type === "ready") {
+                this.log.info("Audio endpoint watcher ready");
+              } else if (message.type === "snapshot" && message.endpoints) {
+                publishSnapshot(message.endpoints);
+              } else if (message.type === "endpoint" && message.endpoint) {
+                publishEndpoint(message.endpoint);
+              } else if (message.type === "error") {
+                this.log.warn("Audio watcher reported an error", { message: message.message });
+              }
+            } catch (error) {
+              this.log.warn("Ignoring invalid audio watcher line", { line, error: String(error) });
             }
-          } catch (error) {
-            this.log.warn("Ignoring invalid audio watcher line", { line, error: String(error) });
           }
-        }
-      });
+        });
 
-      this.child.stderr.on("data", (chunk: Buffer) => {
-        this.log.warn("Audio watcher stderr", { message: chunk.toString("utf8").trim() });
-      });
+        child.stderr.on("data", (chunk: Buffer) => {
+          this.log.warn("Audio watcher stderr", { message: chunk.toString("utf8").trim() });
+        });
 
-      this.child.on("error", (error) => {
-        subscriber.error(error);
-      });
+        child.on("error", (error) => {
+          if (this.child === child) this.child = undefined;
+          scheduleRestart({ error: String(error) });
+        });
 
-      this.child.on("exit", (code, signal) => {
-        if (!subscriber.closed) {
-          subscriber.error(
-            new Error(`Audio watcher exited with code ${code ?? "null"} signal ${signal ?? "null"}`)
-          );
-        }
-      });
+        child.on("exit", (code, signal) => {
+          if (this.child === child) this.child = undefined;
+          if (!stopping) scheduleRestart({ code, signal });
+        });
+      };
+
+      startChild();
 
       return () => {
+        stopping = true;
+        if (restartTimer) clearTimeout(restartTimer);
         this.child?.kill();
         this.child = undefined;
       };
