@@ -85,7 +85,7 @@ export const defaultConfig: AppConfig = {
   },
   audioModes: {
     mainOutputSlot: "WIN1.OUT",
-    micMixOutputSlot: "VAIO1.OUT",
+    micMixOutputSlot: "VAIO1",
     micSourceChannelsToClear: [1, 2],
     micOutputChannels: [1, 2],
     micInputSlotsToClear: ["WIN1.IN", "WIN2.IN", "WIN3.IN", "WIN4.IN", "WIN5.IN"],
