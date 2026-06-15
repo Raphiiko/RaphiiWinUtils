@@ -67,7 +67,7 @@ internal sealed class EndpointWatcher : IDisposable
 
             var callback = new AudioEndpointVolumeNotificationDelegate(data =>
             {
-                var endpoint = EndpointState.FromDevice(device, "event");
+                var endpoint = EndpointState.FromNotification(device, data, "event");
                 Write(new { type = "endpoint", endpoint });
             });
 
@@ -157,6 +157,19 @@ internal sealed record EndpointState(
             scalar,
             (int)Math.Round(scalar * 100),
             device.AudioEndpointVolume.Mute,
+            source);
+    }
+
+    public static EndpointState FromNotification(MMDevice device, AudioVolumeNotificationData data, string source)
+    {
+        var scalar = data.MasterVolume;
+        return new EndpointState(
+            device.ID,
+            device.FriendlyName,
+            device.DataFlow.ToString(),
+            scalar,
+            (int)Math.Round(scalar * 100),
+            data.Muted,
             source);
     }
 }

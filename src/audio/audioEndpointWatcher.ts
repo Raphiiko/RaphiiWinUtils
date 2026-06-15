@@ -5,6 +5,9 @@ import type { AudioEndpointState, AudioWatcherMessage } from "./types";
 import { getHelperPath } from "../system/paths";
 import { Logger } from "../system/logger";
 
+const recentEventProtectionMs = 2500;
+const volumeEpsilon = 0.00001;
+
 export class AudioEndpointWatcher {
   private child?: ChildProcessWithoutNullStreams;
   private readonly log: Logger;
@@ -31,10 +34,57 @@ export class AudioEndpointWatcher {
 
       let buffer = "";
       const latest = new Map<string, AudioEndpointState>();
+      const lastEventAt = new Map<string, number>();
 
-      const publish = (endpoint: AudioEndpointState) => {
+      const upsert = (endpoint: AudioEndpointState): boolean => {
+        const previous = latest.get(endpoint.id);
+        if (previous && sameEndpointState(previous, endpoint)) return false;
         latest.set(endpoint.id, endpoint);
+        return true;
+      };
+
+      const publishEndpoint = (endpoint: AudioEndpointState) => {
+        if (endpoint.source === "event") {
+          lastEventAt.set(endpoint.id, Date.now());
+        }
+
+        if (!upsert(endpoint)) return;
         subscriber.next([...latest.values()]);
+      };
+
+      const publishSnapshot = (endpoints: AudioEndpointState[]) => {
+        const now = Date.now();
+        const snapshotIds = new Set(endpoints.map((endpoint) => endpoint.id));
+        let changed = false;
+
+        for (const endpoint of endpoints) {
+          const recentEventAt = lastEventAt.get(endpoint.id);
+          const hasRecentEvent = recentEventAt !== undefined && now - recentEventAt < recentEventProtectionMs;
+          const current = latest.get(endpoint.id);
+
+          if (hasRecentEvent && current && !sameEndpointState(current, endpoint)) {
+            this.log.debug("Ignored stale poll snapshot after endpoint event", {
+              name: endpoint.name,
+              source: endpoint.source,
+              currentVolumePercent: current.volumePercent,
+              snapshotVolumePercent: endpoint.volumePercent,
+              currentMuted: current.muted,
+              snapshotMuted: endpoint.muted
+            });
+            continue;
+          }
+
+          changed = upsert(endpoint) || changed;
+        }
+
+        for (const id of latest.keys()) {
+          if (snapshotIds.has(id)) continue;
+          latest.delete(id);
+          lastEventAt.delete(id);
+          changed = true;
+        }
+
+        if (changed) subscriber.next([...latest.values()]);
       };
 
       this.child.stdout.on("data", (chunk: Buffer) => {
@@ -51,11 +101,9 @@ export class AudioEndpointWatcher {
             if (message.type === "ready") {
               this.log.info("Audio endpoint watcher ready");
             } else if (message.type === "snapshot" && message.endpoints) {
-              latest.clear();
-              for (const endpoint of message.endpoints) latest.set(endpoint.id, endpoint);
-              subscriber.next([...latest.values()]);
+              publishSnapshot(message.endpoints);
             } else if (message.type === "endpoint" && message.endpoint) {
-              publish(message.endpoint);
+              publishEndpoint(message.endpoint);
             } else if (message.type === "error") {
               this.log.warn("Audio watcher reported an error", { message: message.message });
             }
@@ -85,4 +133,12 @@ export class AudioEndpointWatcher {
       };
     }).pipe(share());
   }
+}
+
+function sameEndpointState(a: AudioEndpointState, b: AudioEndpointState): boolean {
+  return a.id === b.id &&
+    a.name === b.name &&
+    a.dataFlow === b.dataFlow &&
+    Math.abs(a.volumeScalar - b.volumeScalar) < volumeEpsilon &&
+    a.muted === b.muted;
 }
