@@ -1,4 +1,12 @@
-import { Subject, debounceTime, groupBy, map, mergeMap, distinctUntilChanged } from "rxjs";
+import {
+  Subject,
+  asyncScheduler,
+  distinctUntilChanged,
+  groupBy,
+  map,
+  mergeMap,
+  throttleTime
+} from "rxjs";
 import type { ChannelState } from "../audio/types";
 import { Logger } from "../system/logger";
 import { VbanTextClient } from "./vbanTextClient";
@@ -20,8 +28,8 @@ export class MatrixPresetSync {
         groupBy((state) => state.presetPatch),
         mergeMap((group$) =>
           group$.pipe(
-            debounceTime(25),
             distinctUntilChanged((a, b) => a.gainDb === b.gainDb && a.muted === b.muted),
+            throttleTime(10, asyncScheduler, { leading: true, trailing: true }),
             map((state) => ({
               state,
               command: [
@@ -37,7 +45,7 @@ export class MatrixPresetSync {
           void this.client
             .send(command)
             .then(() => {
-              this.log.info("Synced channel to Matrix", {
+              this.log.debug("Synced channel to Matrix", {
                 channel: state.channelName,
                 presetPatch: state.presetPatch,
                 volumePercent: state.endpoint.volumePercent,
