@@ -110,7 +110,7 @@ export const defaultConfig: AppConfig = {
       },
       iem: {
         name: "IEM",
-        outputDeviceName: "Headphones (2- USB-C to 3.5mm Headphone Jack Adapter)",
+        outputDeviceName: "In Ear Monitors (2- USB-C to 3.5mm Headphone Jack Adapter)",
         micInputSlot: "WIN1.IN",
         micInputChannel: 1
       },
@@ -122,7 +122,7 @@ export const defaultConfig: AppConfig = {
       },
       tws: {
         name: "TWS",
-        outputDeviceName: "Headphones (Nothing Ear)",
+        outputDeviceName: "Nothing Ear (Nothing Ear)",
         micInputSlot: "WIN1.IN",
         micInputChannel: 1
       }
