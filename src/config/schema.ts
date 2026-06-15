@@ -2,6 +2,7 @@ export interface AppConfig {
   matrix: MatrixConfig;
   audio: AudioConfig;
   audioModes: AudioModesConfig;
+  clipboard: ClipboardAutomationConfig;
   updater: UpdaterConfig;
   control: ControlConfig;
   notifications: NotificationConfig;
@@ -48,6 +49,11 @@ export interface AudioModeConfig {
 export interface AudioModeMicRoute {
   inputChannel: number;
   outputChannel: number;
+}
+
+export interface ClipboardAutomationConfig {
+  enabled: boolean;
+  debounceMs: number;
 }
 
 export interface UpdaterConfig {
@@ -152,6 +158,10 @@ export const defaultConfig: AppConfig = {
         ]
       }
     }
+  },
+  clipboard: {
+    enabled: true,
+    debounceMs: 100
   },
   updater: {
     enabled: true,

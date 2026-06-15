@@ -1,12 +1,11 @@
 import { loadConfig } from "./config/loadConfig";
 import { Logger } from "./system/logger";
 import { Notifier } from "./system/notify";
-import { AudioModeService } from "./service/audioModeService";
-import { ChannelVolumeService } from "./service/channelVolumeService";
-import { ControlServer } from "./service/controlServer";
-import { notifyCompletedUpdateIfNeeded, Updater } from "./service/updater";
+import { notifyCompletedUpdateIfNeeded } from "./service/updater";
 import { installLocal } from "./service/installer";
 import { acquireSingleInstanceLock } from "./system/singleInstance";
+import { createServiceModules } from "./modules/serviceModules";
+import { startModules, stopModules } from "./modules/appModule";
 
 const logger = new Logger("raphii-win-utils");
 
@@ -32,32 +31,22 @@ async function main(): Promise<void> {
   logger.info("Service starting");
   notifyCompletedUpdateIfNeeded(config.updater, notifier, logger);
 
-  const updater = new Updater(config.updater, notifier, logger);
-  updater.start();
-
-  const service = new ChannelVolumeService(config, logger);
-  service.start();
-
-  const audioModeService = new AudioModeService(config, logger);
-  const controlServer = new ControlServer(config.control, updater, audioModeService, logger);
-  controlServer.start();
+  const modules = createServiceModules(config, notifier, logger);
+  await startModules(modules, logger);
 
   let stopping = false;
-  const stop = () => {
+  const stop = async () => {
     if (stopping) return;
     stopping = true;
     logger.info("Service stopping");
-    controlServer.stop();
-    audioModeService.stop();
-    service.stop();
-    updater.stop();
+    await stopModules(modules, logger);
     instanceLock.release();
     process.exit(0);
   };
 
   process.on("exit", () => instanceLock.release());
-  process.on("SIGINT", stop);
-  process.on("SIGTERM", stop);
+  process.on("SIGINT", () => void stop());
+  process.on("SIGTERM", () => void stop());
 }
 
 main().catch((error) => {

@@ -1,8 +1,19 @@
 # RaphiiWinUtils
 
-Personal Windows glue service for local audio/control workflows.
+Personal Windows glue service for local audio/control/clipboard workflows.
 
 The first workflow mirrors Windows endpoint volume/mute state from renamed VBMatrix playback devices into VB-Audio Matrix Coconut preset patch gain/mute values.
+
+The clipboard workflow listens for text clipboard changes and rewrites social links to embed-friendly alternate frontends:
+
+- `x.com` / `twitter.com` status links -> `girlcockx.com`
+- `tiktok.com` / `vm.tiktok.com` links -> `tnktok.com`
+- `bsky.app` links -> `bskx.app`
+- `reddit.com` links -> `rxddit.com`
+- `instagram.com` post/reel/tv links -> `kkinstagram.com`
+- `pixiv.net` artwork links -> `phixiv.net`
+
+Runtime wiring is split by feature under `src/modules`, with feature-specific code under folders like `src/service`, `src/clipboard`, `src/audio`, and `src/matrix`.
 
 No secrets or machine-specific runtime config are stored in this repo. On first run the service creates:
 

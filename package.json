@@ -21,6 +21,7 @@
     "check": "bunx tsc --noEmit"
   },
   "dependencies": {
+    "@crosscopy/clipboard": "^0.3.6",
     "elysia": "^1.4.28",
     "node-notifier": "^10.0.1",
     "rxjs": "^7.8.2"

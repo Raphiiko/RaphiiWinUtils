@@ -102,6 +102,10 @@
       }
     }
   },
+  "clipboard": {
+    "enabled": true,
+    "debounceMs": 100
+  },
   "updater": {
     "enabled": true,
     "repoUrl": "https://github.com/Raphiiko/RaphiiWinUtils.git",

@@ -5,6 +5,7 @@
     "": {
       "name": "raphii-win-utils",
       "dependencies": {
+        "@crosscopy/clipboard": "^0.3.6",
         "elysia": "^1.4.28",
         "node-notifier": "^10.0.1",
         "rxjs": "^7.8.2",
@@ -24,6 +25,16 @@
   },
   "packages": {
     "@borewit/text-codec": ["@borewit/text-codec@0.2.2", "", {}, "sha512-DDaRehssg1aNrH4+2hnj1B7vnUGEjU6OIlyRdkMd0aUdIUvKXrJfXsy8LVtXAy7DRvYVluWbMspsRhz2lcW0mQ=="],
+
+    "@crosscopy/clipboard": ["@crosscopy/clipboard@0.3.6", "", { "optionalDependencies": { "@crosscopy/clipboard-darwin-arm64": "0.3.6", "@crosscopy/clipboard-darwin-x64": "0.3.6", "@crosscopy/clipboard-linux-x64-gnu": "0.3.6", "@crosscopy/clipboard-win32-x64-msvc": "0.3.6" } }, "sha512-h/LlfI5t/xsxLr63g3Os0mjoeITj7/8x8Goy5PZ+f4bk3DDgc1r5VXO462U3e8/+LjHixtvS9sTk/MoKEwSutw=="],
+
+    "@crosscopy/clipboard-darwin-arm64": ["@crosscopy/clipboard-darwin-arm64@0.3.6", "", { "os": "darwin", "cpu": "arm64" }, "sha512-l2FtoiefGpYIWL8Fvku/pEth8KlI4j4andtn8WveumMiNx/0TNI2OEhSe+mX4X/me0+b5le/PTVrOPXrxvZuiA=="],
+
+    "@crosscopy/clipboard-darwin-x64": ["@crosscopy/clipboard-darwin-x64@0.3.6", "", { "os": "darwin", "cpu": "x64" }, "sha512-fXVk7oLUkCyjVakW6VZc1JIeUcXH0/edJXAUREFpWastMlcZAp4AF/7njtlimWmANxtAQu3R2YI3ziFzEF4Neg=="],
+
+    "@crosscopy/clipboard-linux-x64-gnu": ["@crosscopy/clipboard-linux-x64-gnu@0.3.6", "", { "os": "linux", "cpu": "x64" }, "sha512-bPKMdbmPM6wa9smgpA9RSpIfWhQxd93XWmRQf9vkwrmvnP43shgXegV+vO8SyDd3ZPZy/OvHe3p/YyWNBC4S6g=="],
+
+    "@crosscopy/clipboard-win32-x64-msvc": ["@crosscopy/clipboard-win32-x64-msvc@0.3.6", "", { "os": "win32", "cpu": "x64" }, "sha512-GZ0i9XoPYQV5DhTQWiHjArE3ZTuovHmHNL7yE6Pm/91icOtrm9Mk9tVnpU/rQR9bzOn3MqN8+AFsp5NKZqTg7Q=="],
 
     "@eslint-community/eslint-utils": ["@eslint-community/eslint-utils@4.9.1", "", { "dependencies": { "eslint-visitor-keys": "^3.4.3" }, "peerDependencies": { "eslint": "^6.0.0 || ^7.0.0 || >=8.0.0" } }, "sha512-phrYmNiYppR7znFEdqgfWHXR6NCkZEK7hwWDHZUjit/2/U0r6XvkDl0SYnoM51Hq7FhCGdLDT6zxCCOY1hexsQ=="],
 

@@ -35,6 +35,7 @@ function mergeConfig(base: AppConfig, override: Partial<AppConfig>): AppConfig {
         ...override.audioModes?.modes
       }
     },
+    clipboard: { ...base.clipboard, ...override.clipboard },
     updater: { ...base.updater, ...override.updater },
     control: { ...base.control, ...override.control },
     notifications: { ...base.notifications, ...override.notifications }
