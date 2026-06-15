@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { interval, merge, of, switchMap } from "rxjs";
 import type { UpdaterConfig } from "../config/schema";
@@ -108,23 +108,69 @@ function readDeployedRevision(installDir: string): string | undefined {
 
 async function stageAndRestart(sourceDir: string, installDir: string, revision: string): Promise<void> {
   const distDir = join(sourceDir, "dist");
+  const scriptPath = join(installDir, "apply-update.ps1");
+  const logPath = join(
+    process.env.APPDATA ?? join(process.env.USERPROFILE ?? ".", "AppData", "Roaming"),
+    "RaphiiWinUtils",
+    "logs",
+    `update-${new Date().toISOString().slice(0, 10)}.log`
+  );
   const script = [
+    "$ErrorActionPreference = 'Stop'",
     `$pidToWait = ${process.pid}`,
     `$dist = "${ps(distDir)}"`,
     `$install = "${ps(installDir)}"`,
-    "Wait-Process -Id $pidToWait -ErrorAction SilentlyContinue",
-    "Copy-Item -LiteralPath (Join-Path $dist 'RaphiiWinUtils.exe') -Destination (Join-Path $install 'RaphiiWinUtils.exe') -Force",
-    "$helpers = Join-Path $install 'helpers'",
-    "if (Test-Path -LiteralPath $helpers) { Remove-Item -LiteralPath $helpers -Recurse -Force }",
-    "Copy-Item -LiteralPath (Join-Path $dist 'helpers') -Destination $helpers -Recurse -Force",
-    `Set-Content -LiteralPath (Join-Path $install '.deployed-revision') -Value "${ps(revision)}" -Encoding UTF8`,
-    "Start-Process -FilePath (Join-Path $install 'RaphiiWinUtils.exe') -WorkingDirectory $install -WindowStyle Hidden"
+    `$revision = "${ps(revision)}"`,
+    `$logPath = "${ps(logPath)}"`,
+    "New-Item -ItemType Directory -Path (Split-Path -Parent $logPath) -Force | Out-Null",
+    "function Write-UpdateLog([string]$message) { Add-Content -LiteralPath $logPath -Value ((Get-Date).ToString('o') + ' ' + $message) }",
+    "try {",
+    "  Write-UpdateLog \"Waiting for process $pidToWait\"",
+    "  Wait-Process -Id $pidToWait -Timeout 30 -ErrorAction SilentlyContinue",
+    "  Start-Sleep -Milliseconds 500",
+    "  Write-UpdateLog 'Copying executable'",
+    "  Copy-Item -LiteralPath (Join-Path $dist 'RaphiiWinUtils.exe') -Destination (Join-Path $install 'RaphiiWinUtils.exe') -Force",
+    "  $helpers = Join-Path $install 'helpers'",
+    "  Write-UpdateLog 'Copying helpers'",
+    "  if (Test-Path -LiteralPath $helpers) { Remove-Item -LiteralPath $helpers -Recurse -Force }",
+    "  Copy-Item -LiteralPath (Join-Path $dist 'helpers') -Destination $helpers -Recurse -Force",
+    "  Set-Content -LiteralPath (Join-Path $install '.deployed-revision') -Value $revision -Encoding UTF8",
+    "  Write-UpdateLog \"Starting updated service at revision $revision\"",
+    "  Start-Process -FilePath (Join-Path $install 'RaphiiWinUtils.exe') -WorkingDirectory $install -WindowStyle Hidden",
+    "  Write-UpdateLog 'Update handoff complete'",
+    "} catch {",
+    "  Write-UpdateLog ('Update handoff failed: ' + $_.Exception.ToString())",
+    "  throw",
+    "}"
+  ].join("\n");
+
+  writeFileSync(scriptPath, script, "utf8");
+
+  const launchCommand = [
+    "$ErrorActionPreference = 'Stop'",
+    `$scriptPath = "${ps(scriptPath)}"`,
+    "$args = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scriptPath)",
+    "Start-Process -FilePath 'powershell.exe' -ArgumentList $args -WindowStyle Hidden"
   ].join("; ");
 
-  Bun.spawn(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], {
+  const launch = Bun.spawnSync([
+    "powershell.exe",
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    launchCommand
+  ], {
     windowsHide: true,
-    stdio: ["ignore", "ignore", "ignore"]
+    stdout: "pipe",
+    stderr: "pipe"
   });
+
+  if (launch.exitCode !== 0) {
+    const stderr = new TextDecoder().decode(launch.stderr);
+    const stdout = new TextDecoder().decode(launch.stdout);
+    throw new Error(`Failed to launch update handoff: ${stdout}\n${stderr}`.trim());
+  }
 
   process.exit(0);
 }
