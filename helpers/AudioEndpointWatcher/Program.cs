@@ -2,11 +2,12 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using NAudio.CoreAudioApi;
+using NAudio.CoreAudioApi.Interfaces;
 
-var pollMs = ParsePollMs(args);
+var resyncMs = ParseResyncMs(args);
 try
 {
-    using var watcher = new EndpointWatcher(pollMs);
+    using var watcher = new EndpointWatcher(resyncMs);
     watcher.Run();
 }
 catch (Exception ex)
@@ -15,15 +16,24 @@ catch (Exception ex)
     Environment.ExitCode = 1;
 }
 
-static int ParsePollMs(string[] args)
+static int ParseResyncMs(string[] args)
 {
     foreach (var arg in args)
     {
-        if (!arg.StartsWith("--poll-ms=", StringComparison.OrdinalIgnoreCase)) continue;
-        if (int.TryParse(arg["--poll-ms=".Length..], out var value)) return Math.Max(250, value);
+        if (arg.StartsWith("--resync-ms=", StringComparison.OrdinalIgnoreCase) &&
+            int.TryParse(arg["--resync-ms=".Length..], out var resyncMs))
+        {
+            return Math.Max(5000, resyncMs);
+        }
+
+        if (arg.StartsWith("--poll-ms=", StringComparison.OrdinalIgnoreCase) &&
+            int.TryParse(arg["--poll-ms=".Length..], out var legacyPollMs))
+        {
+            return Math.Max(5000, legacyPollMs);
+        }
     }
 
-    return 1000;
+    return 60000;
 }
 
 internal sealed class EndpointWatcher : IDisposable
@@ -34,50 +44,85 @@ internal sealed class EndpointWatcher : IDisposable
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    private readonly int pollMs;
+    private const int DeviceChangeDebounceMs = 500;
+
+    private readonly int resyncMs;
     private readonly MMDeviceEnumerator enumerator = new();
     private readonly ConcurrentDictionary<string, EndpointSubscription> subscriptions = new();
-    private readonly Timer pollTimer;
+    private readonly EndpointNotificationClient notificationClient;
+    private readonly Timer resyncTimer;
+    private readonly Timer deviceChangeTimer;
     private readonly object writeLock = new();
+    private readonly object snapshotLock = new();
+    private readonly ManualResetEventSlim stopEvent = new(false);
+    private bool disposed;
 
-    public EndpointWatcher(int pollMs)
+    public EndpointWatcher(int resyncMs)
     {
-        this.pollMs = pollMs;
-        pollTimer = new Timer(_ => SafeSnapshot("poll"), null, Timeout.Infinite, Timeout.Infinite);
+        this.resyncMs = resyncMs;
+        notificationClient = new EndpointNotificationClient(QueueDeviceSnapshot);
+        resyncTimer = new Timer(_ => SafeSnapshot("resync"), null, Timeout.Infinite, Timeout.Infinite);
+        deviceChangeTimer = new Timer(_ => SafeSnapshot("device-event"), null, Timeout.Infinite, Timeout.Infinite);
     }
 
     public void Run()
     {
-        SafeSubscribeAll();
+        enumerator.RegisterEndpointNotificationCallback(notificationClient);
         Write(new { type = "ready" });
         SafeSnapshot("snapshot");
-        pollTimer.Change(pollMs, pollMs);
-        Thread.Sleep(Timeout.Infinite);
+        resyncTimer.Change(resyncMs, resyncMs);
+        stopEvent.Wait();
     }
 
     public void Dispose()
     {
-        pollTimer.Dispose();
+        if (disposed) return;
+        disposed = true;
+
+        stopEvent.Set();
+        resyncTimer.Dispose();
+        deviceChangeTimer.Dispose();
+        try
+        {
+            enumerator.UnregisterEndpointNotificationCallback(notificationClient);
+        }
+        catch
+        {
+            // Best-effort cleanup while the process is exiting.
+        }
+
         foreach (var subscription in subscriptions.Values) subscription.Dispose();
         subscriptions.Clear();
+        stopEvent.Dispose();
         enumerator.Dispose();
     }
 
-    private void SubscribeAll()
+    private void QueueDeviceSnapshot()
     {
-        foreach (var device in EnumerateRenderDevices())
+        if (disposed) return;
+        deviceChangeTimer.Change(DeviceChangeDebounceMs, Timeout.Infinite);
+    }
+
+    private void SubscribeAll(IReadOnlyCollection<MMDevice> activeDevices)
+    {
+        var activeIds = activeDevices.Select(device => device.ID).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in subscriptions.Keys)
+        {
+            if (activeIds.Contains(id)) continue;
+            if (subscriptions.TryRemove(id, out var oldSubscription)) oldSubscription.Dispose();
+        }
+
+        foreach (var device in activeDevices)
         {
             if (subscriptions.ContainsKey(device.ID))
-            {
-                device.Dispose();
                 continue;
-            }
 
+            var subscriptionDevice = enumerator.GetDevice(device.ID);
             var callback = new AudioEndpointVolumeNotificationDelegate(data =>
             {
                 try
                 {
-                    var endpoint = EndpointState.FromNotification(device, data, "event");
+                    var endpoint = EndpointState.FromNotification(subscriptionDevice, data, "event");
                     Write(new { type = "endpoint", endpoint });
                 }
                 catch (Exception ex)
@@ -86,16 +131,16 @@ internal sealed class EndpointWatcher : IDisposable
                 }
             });
 
-            device.AudioEndpointVolume.OnVolumeNotification += callback;
-            subscriptions[device.ID] = new EndpointSubscription(device, callback);
+            subscriptionDevice.AudioEndpointVolume.OnVolumeNotification += callback;
+            subscriptions[device.ID] = new EndpointSubscription(subscriptionDevice, callback);
         }
     }
 
-    private void SafeSubscribeAll()
+    private void SafeSubscribeAll(IReadOnlyCollection<MMDevice> activeDevices)
     {
         try
         {
-            SubscribeAll();
+            SubscribeAll(activeDevices);
         }
         catch (Exception ex)
         {
@@ -105,16 +150,24 @@ internal sealed class EndpointWatcher : IDisposable
 
     private void SafeSnapshot(string source)
     {
+        if (disposed) return;
+
         try
         {
-            SafeSubscribeAll();
-            var endpoints = EnumerateRenderDevices()
-                .Select(device =>
-                {
-                    using (device) return EndpointState.FromDevice(device, source);
-                })
-                .OrderBy(endpoint => endpoint.Name, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
+            EndpointState[] endpoints;
+            lock (snapshotLock)
+            {
+                if (disposed) return;
+                var devices = EnumerateRenderDevices();
+                SafeSubscribeAll(devices);
+                endpoints = devices
+                    .Select(device =>
+                    {
+                        using (device) return EndpointState.FromDevice(device, source);
+                    })
+                    .OrderBy(endpoint => endpoint.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
 
             Write(new { type = "snapshot", endpoints });
         }
@@ -124,7 +177,7 @@ internal sealed class EndpointWatcher : IDisposable
         }
     }
 
-    private IEnumerable<MMDevice> EnumerateRenderDevices()
+    private MMDevice[] EnumerateRenderDevices()
     {
         return enumerator
             .EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active)
@@ -138,6 +191,41 @@ internal sealed class EndpointWatcher : IDisposable
             Console.WriteLine(JsonSerializer.Serialize(message, JsonOptions));
             Console.Out.Flush();
         }
+    }
+}
+
+internal sealed class EndpointNotificationClient : IMMNotificationClient
+{
+    private readonly Action onDeviceChanged;
+
+    public EndpointNotificationClient(Action onDeviceChanged)
+    {
+        this.onDeviceChanged = onDeviceChanged;
+    }
+
+    public void OnDeviceStateChanged(string deviceId, DeviceState newState)
+    {
+        onDeviceChanged();
+    }
+
+    public void OnDeviceAdded(string pwstrDeviceId)
+    {
+        onDeviceChanged();
+    }
+
+    public void OnDeviceRemoved(string deviceId)
+    {
+        onDeviceChanged();
+    }
+
+    public void OnDefaultDeviceChanged(DataFlow flow, Role role, string defaultDeviceId)
+    {
+        if (flow == DataFlow.Render || flow == DataFlow.All) onDeviceChanged();
+    }
+
+    public void OnPropertyValueChanged(string pwstrDeviceId, PropertyKey key)
+    {
+        onDeviceChanged();
     }
 }
 

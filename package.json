@@ -10,8 +10,9 @@
     "build": "bun build --compile --target=bun-windows-x64 ./src/main.ts --outfile ./dist/RaphiiWinUtils.exe && bun run stamp:exe",
     "stamp:exe": "bun run scripts/stampExe.ts",
     "build:helper:audio": "dotnet publish ./helpers/AudioEndpointWatcher/AudioEndpointWatcher.csproj -c Release -r win-x64 --self-contained false -o ./dist/helpers/AudioEndpointWatcher",
+    "build:helper:clipboard": "dotnet publish ./helpers/ClipboardWatcher/ClipboardWatcher.csproj -c Release -r win-x64 --self-contained false -o ./dist/helpers/ClipboardWatcher",
     "build:notification-assets": "bun run scripts/copyNotificationAssets.ts",
-    "build:helper": "bun run build:helper:audio && bun run build:notification-assets",
+    "build:helper": "bun run build:helper:audio && bun run build:helper:clipboard && bun run build:notification-assets",
     "build:all": "bun run clean:dist && bun run build && bun run build:helper",
     "install:local": "bun run src/main.ts install",
     "lint": "eslint .",
@@ -21,7 +22,6 @@
     "check": "bunx tsc --noEmit"
   },
   "dependencies": {
-    "@crosscopy/clipboard": "^0.3.6",
     "elysia": "^1.4.28",
     "node-notifier": "^10.0.1",
     "rxjs": "^7.8.2"

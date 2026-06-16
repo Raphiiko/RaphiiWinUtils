@@ -19,7 +19,7 @@ export class ChannelVolumeService {
   }
 
   start(): void {
-    const watcher = new AudioEndpointWatcher(this.config.audio.pollMs, this.log);
+    const watcher = new AudioEndpointWatcher(this.config.audio.endpointResyncMs, this.log);
     const matrixClient = new VbanTextClient(this.config.matrix, this.log);
     const matrixSync = new MatrixPresetSync(matrixClient, this.log);
     matrixSync.start();

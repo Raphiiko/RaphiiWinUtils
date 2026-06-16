@@ -17,6 +17,7 @@ export interface MatrixConfig {
 
 export interface AudioConfig {
   pollMs: number;
+  endpointResyncMs: number;
   minDb: number;
   maxDb: number;
   zeroVolumeMutes: boolean;
@@ -84,6 +85,7 @@ export const defaultConfig: AppConfig = {
   },
   audio: {
     pollMs: 1000,
+    endpointResyncMs: 60000,
     minDb: -60,
     maxDb: 0,
     zeroVolumeMutes: true,

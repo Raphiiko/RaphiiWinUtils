@@ -7,6 +7,7 @@
   },
   "audio": {
     "pollMs": 1000,
+    "endpointResyncMs": 60000,
     "minDb": -60,
     "maxDb": 0,
     "zeroVolumeMutes": true,

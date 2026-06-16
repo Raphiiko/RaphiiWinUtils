@@ -3,6 +3,7 @@
 Personal Windows glue service for local audio/control/clipboard workflows.
 
 The first workflow mirrors Windows endpoint volume/mute state from renamed VBMatrix playback devices into VB-Audio Matrix Coconut preset patch gain/mute values.
+Volume/mute changes are event-driven through the `AudioEndpointWatcher` helper; `audio.endpointResyncMs` controls only the slow fallback endpoint rediscovery snapshot.
 
 The clipboard workflow listens for text clipboard changes and rewrites social links to embed-friendly alternate frontends:
 

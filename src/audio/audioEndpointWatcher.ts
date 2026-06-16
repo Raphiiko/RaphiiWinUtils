@@ -14,7 +14,7 @@ export class AudioEndpointWatcher {
   private readonly log: Logger;
 
   constructor(
-    private readonly pollMs: number,
+    private readonly endpointResyncMs: number,
     logger: Logger
   ) {
     this.log = logger.child("audio");
@@ -101,7 +101,7 @@ export class AudioEndpointWatcher {
         }
 
         buffer = "";
-        const child = spawn(helperPath, [`--poll-ms=${this.pollMs}`], {
+        const child = spawn(helperPath, [`--resync-ms=${this.endpointResyncMs}`], {
           windowsHide: true,
           stdio: ["pipe", "pipe", "pipe"]
         });

@@ -5,7 +5,7 @@ export interface AudioEndpointState {
   volumeScalar: number;
   volumePercent: number;
   muted: boolean;
-  source: "snapshot" | "event" | "poll";
+  source: "snapshot" | "event" | "resync" | "device-event";
 }
 
 export interface AudioWatcherMessage {
