@@ -48,5 +48,10 @@ export function mapEndpointsToChannels(
 
 export function scalarToDb(scalar: number, minDb: number, maxDb: number): number {
   const clampedScalar = Math.max(0, Math.min(1, scalar));
-  return minDb + clampedScalar * (maxDb - minDb);
+  if (clampedScalar === 0) return minDb;
+
+  // A squared amplitude taper gives a conventional perceptual volume control:
+  // gain = scalar², therefore dB = 20 log10(gain) = 40 log10(scalar).
+  const gainDb = maxDb + 40 * Math.log10(clampedScalar);
+  return Math.max(minDb, Math.min(maxDb, gainDb));
 }
