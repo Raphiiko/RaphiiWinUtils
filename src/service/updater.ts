@@ -115,7 +115,7 @@ export class Updater {
         this.log.warn("Update source is not available yet; skipping update check");
         return;
       }
-      await requireSuccess("git", ["fetch", "origin", this.config.branch], {
+      await requireSuccess("git", ["fetch", "--prune", "origin"], {
         cwd: sourceDir,
         timeoutMs: 120_000
       });
