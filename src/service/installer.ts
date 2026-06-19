@@ -183,7 +183,7 @@ async function installPushUpdateHook(config: AppConfig, log: Logger): Promise<vo
     const block = [
       begin,
       "# Git has no client-side post-push hook, so pre-push starts a background process that waits for this git push to exit.",
-      `RAPHII_GIT_PUSH_PID="$PPID" powershell.exe -NoProfile -ExecutionPolicy Bypass -Command 'Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-Command","try { Wait-Process -Id $env:RAPHII_GIT_PUSH_PID -ErrorAction SilentlyContinue } catch { }; try { Invoke-RestMethod -Method Post -Uri ${endpoint} | Out-Null } catch { }") -WindowStyle Hidden'`,
+      `RAPHII_GIT_PUSH_PID="$PPID" powershell.exe -NoProfile -ExecutionPolicy Bypass -Command 'Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-Command","try { Wait-Process -Id $env:RAPHII_GIT_PUSH_PID -ErrorAction SilentlyContinue } catch { }; Start-Sleep -Seconds 3; try { Invoke-RestMethod -Method Post -Uri ${endpoint} | Out-Null } catch { }") -WindowStyle Hidden'`,
       end
     ].join("\n");
 
