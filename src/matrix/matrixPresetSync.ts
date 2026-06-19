@@ -7,9 +7,9 @@ import {
   mergeMap,
   throttleTime
 } from "rxjs";
-import type { ChannelState } from "../audio/types";
-import { Logger } from "../system/logger";
-import { VbanTextClient } from "./vbanTextClient";
+import type { ChannelState } from "../audio/types.ts";
+import { Logger } from "../system/logger.ts";
+import { VbanTextClient } from "./vbanTextClient.ts";
 
 interface MatrixSyncUpdate {
   state: ChannelState;
@@ -19,11 +19,10 @@ interface MatrixSyncUpdate {
 export class MatrixPresetSync {
   private readonly updates$ = new Subject<MatrixSyncUpdate>();
   private readonly log: Logger;
+  private readonly client: VbanTextClient;
 
-  constructor(
-    private readonly client: VbanTextClient,
-    logger: Logger
-  ) {
+  constructor(client: VbanTextClient, logger: Logger) {
+    this.client = client;
     this.log = logger.child("matrix-sync");
   }
 

@@ -25,15 +25,16 @@ No secrets or machine-specific runtime config are stored in this repo. On first 
 ## Development
 
 ```powershell
-bun install
-bun run build:all
-bun run dev
+fnm use
+npm install
+npm run build:all
+npm run dev
 ```
 
 ## Install Locally
 
 ```powershell
-bun run install:local
+npm run install:local
 ```
 
 The install command builds the app into:
@@ -44,7 +45,7 @@ C:\Tools\RaphiiWinUtils
 
 It also:
 
-- creates a startup shortcut in the current user's Startup folder
+- registers a hidden logon scheduled task that launches the app with Node 26
 - registers the Windows notification identity
 - installs a local `pre-push` Git hook that starts a background watcher; Git has no native `post-push` hook, so the watcher waits for `git push` to exit before asking the running app to check for updates
 

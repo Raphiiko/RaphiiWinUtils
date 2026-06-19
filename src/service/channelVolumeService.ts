@@ -1,20 +1,19 @@
 import { Subscription, interval, tap } from "rxjs";
-import type { AppConfig } from "../config/schema";
-import { AudioEndpointWatcher } from "../audio/audioEndpointWatcher";
-import { mapEndpointsToChannels } from "../audio/channelMapper";
-import type { ChannelState } from "../audio/types";
-import { VbanTextClient } from "../matrix/vbanTextClient";
-import { MatrixPresetSync } from "../matrix/matrixPresetSync";
-import { Logger } from "../system/logger";
+import type { AppConfig } from "../config/schema.ts";
+import { AudioEndpointWatcher } from "../audio/audioEndpointWatcher.ts";
+import { mapEndpointsToChannels } from "../audio/channelMapper.ts";
+import type { ChannelState } from "../audio/types.ts";
+import { VbanTextClient } from "../matrix/vbanTextClient.ts";
+import { MatrixPresetSync } from "../matrix/matrixPresetSync.ts";
+import { Logger } from "../system/logger.ts";
 
 export class ChannelVolumeService {
   private readonly subscriptions = new Subscription();
   private readonly log: Logger;
+  private readonly config: AppConfig;
 
-  constructor(
-    private readonly config: AppConfig,
-    logger: Logger
-  ) {
+  constructor(config: AppConfig, logger: Logger) {
+    this.config = config;
     this.log = logger.child("channel-volume");
   }
 

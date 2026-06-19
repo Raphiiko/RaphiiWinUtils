@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { defaultConfig, type AppConfig } from "./schema";
+import { defaultConfig, type AppConfig } from "./schema.ts";
 
 export function getConfigPath(): string {
   const appData = process.env.APPDATA ?? join(process.env.USERPROFILE ?? ".", "AppData", "Roaming");
@@ -11,11 +12,11 @@ export async function loadConfig(): Promise<AppConfig> {
   const path = getConfigPath();
   if (!existsSync(path)) {
     mkdirSync(dirname(path), { recursive: true });
-    await Bun.write(path, `${JSON.stringify(defaultConfig, null, 2)}\n`);
+    await writeFile(path, `${JSON.stringify(defaultConfig, null, 2)}\n`, "utf8");
     return structuredClone(defaultConfig);
   }
 
-  const userConfig = JSON.parse(await Bun.file(path).text()) as Partial<AppConfig>;
+  const userConfig = JSON.parse(await readFile(path, "utf8")) as Partial<AppConfig>;
   return mergeConfig(defaultConfig, userConfig);
 }
 

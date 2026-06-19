@@ -1,4 +1,4 @@
-import { Logger } from "../system/logger";
+import { Logger } from "../system/logger.ts";
 
 export interface AppModule {
   name: string;

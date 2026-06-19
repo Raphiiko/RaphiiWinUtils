@@ -1,9 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { Observable, share } from "rxjs";
-import type { AudioEndpointState, AudioWatcherMessage } from "./types";
-import { getHelperPath } from "../system/paths";
-import { Logger } from "../system/logger";
+import type { AudioEndpointState, AudioWatcherMessage } from "./types.ts";
+import { getHelperPath } from "../system/paths.ts";
+import { Logger } from "../system/logger.ts";
 
 const recentEventProtectionMs = 2500;
 const restartDelayMs = 1000;
@@ -12,11 +12,10 @@ const volumeEpsilon = 0.00001;
 export class AudioEndpointWatcher {
   private child?: ChildProcessWithoutNullStreams;
   private readonly log: Logger;
+  private readonly endpointResyncMs: number;
 
-  constructor(
-    private readonly endpointResyncMs: number,
-    logger: Logger
-  ) {
+  constructor(endpointResyncMs: number, logger: Logger) {
+    this.endpointResyncMs = endpointResyncMs;
     this.log = logger.child("audio");
   }
 

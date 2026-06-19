@@ -39,3 +39,27 @@ export function getSnoreToastPath(): string {
 
   return runtimeHelper;
 }
+
+export function getNodeExecutablePath(): string {
+  const fnmDir = process.env.FNM_DIR;
+  if (fnmDir) {
+    const fnmNode = join(
+      fnmDir,
+      "node-versions",
+      `v${process.versions.node}`,
+      "installation",
+      "node.exe"
+    );
+    if (existsSync(fnmNode)) return fnmNode;
+  }
+
+  return process.execPath;
+}
+
+export function getNpmCliPath(): string {
+  const npmCli = join(dirname(getNodeExecutablePath()), "node_modules", "npm", "bin", "npm-cli.js");
+  if (!existsSync(npmCli)) {
+    throw new Error(`npm CLI not found beside Node: ${npmCli}`);
+  }
+  return npmCli;
+}

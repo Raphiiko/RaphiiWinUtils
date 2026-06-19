@@ -29,8 +29,7 @@ export default tseslint.config(
         tsconfigRootDir
       },
       globals: {
-        ...globals.node,
-        Bun: "readonly"
+        ...globals.node
       }
     },
     rules: {

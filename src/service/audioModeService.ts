@@ -1,6 +1,6 @@
-import type { AppConfig, AudioModeConfig, AudioModeMicRoute } from "../config/schema";
-import { VbanTextClient } from "../matrix/vbanTextClient";
-import { Logger } from "../system/logger";
+import type { AppConfig, AudioModeConfig, AudioModeMicRoute } from "../config/schema.ts";
+import { VbanTextClient } from "../matrix/vbanTextClient.ts";
+import { Logger } from "../system/logger.ts";
 
 export interface AudioModeSummary {
   id: string;
@@ -12,11 +12,10 @@ export interface AudioModeSummary {
 
 export class AudioModeService {
   private readonly log: Logger;
+  private readonly config: AppConfig;
 
-  constructor(
-    private readonly config: AppConfig,
-    logger: Logger
-  ) {
+  constructor(config: AppConfig, logger: Logger) {
+    this.config = config;
     this.log = logger.child("audio-modes");
   }
 
@@ -217,8 +216,11 @@ export class AudioModeService {
 }
 
 export class UnknownAudioModeError extends Error {
-  constructor(readonly id: string) {
+  readonly id: string;
+
+  constructor(id: string) {
     super(`Unknown audio mode: ${id}`);
+    this.id = id;
   }
 }
 

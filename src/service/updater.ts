@@ -1,12 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { exhaustMap, from, Subject, Subscription, timer } from "rxjs";
-import type { UpdaterConfig } from "../config/schema";
-import { Logger } from "../system/logger";
-import { getRuntimeRoot } from "../system/paths";
-import { requireSuccess, runCommand } from "../system/process";
-import type { Notifier } from "../system/notify";
-import { writeLauncherScript } from "./installer";
+import type { UpdaterConfig } from "../config/schema.ts";
+import { Logger } from "../system/logger.ts";
+import { getNodeExecutablePath, getNpmCliPath, getRuntimeRoot } from "../system/paths.ts";
+import { requireSuccess, runCommand } from "../system/process.ts";
+import type { Notifier } from "../system/notify.ts";
+import { writeLauncherScript } from "./installer.ts";
 
 interface UpdateCheckRequest {
   reason: string;
@@ -14,6 +15,8 @@ interface UpdateCheckRequest {
 
 export class Updater {
   private readonly log: Logger;
+  private readonly config: UpdaterConfig;
+  private readonly notifier: Notifier;
   private readonly checkRequests$ = new Subject<UpdateCheckRequest>();
   private readonly subscriptions = new Subscription();
   private active = false;
@@ -23,11 +26,9 @@ export class Updater {
   private lastCheckReason?: string;
   private lastCheckResult?: string;
 
-  constructor(
-    private readonly config: UpdaterConfig,
-    private readonly notifier: Notifier,
-    logger: Logger
-  ) {
+  constructor(config: UpdaterConfig, notifier: Notifier, logger: Logger) {
+    this.config = config;
+    this.notifier = notifier;
     this.log = logger.child("updater");
   }
 
@@ -138,11 +139,16 @@ export class Updater {
         cwd: sourceDir,
         timeoutMs: 60_000
       });
-      await requireSuccess("bun", ["install", "--frozen-lockfile"], {
+      const nodePath = getNodeExecutablePath();
+      const npmCli = getNpmCliPath();
+      await requireSuccess(nodePath, [npmCli, "ci"], {
         cwd: sourceDir,
         timeoutMs: 120_000
       });
-      await requireSuccess("bun", ["run", "build:all"], { cwd: sourceDir, timeoutMs: 180_000 });
+      await requireSuccess(nodePath, [npmCli, "run", "build:all"], {
+        cwd: sourceDir,
+        timeoutMs: 180_000
+      });
 
       stageAndRestart(sourceDir, this.config.installDir, remote);
     } catch (error) {
@@ -255,8 +261,10 @@ function stageAndRestart(sourceDir: string, installDir: string, revision: string
     '  Write-UpdateLog "Waiting for process $pidToWait"',
     "  Wait-Process -Id $pidToWait -Timeout 30 -ErrorAction SilentlyContinue",
     "  Start-Sleep -Milliseconds 500",
-    "  Write-UpdateLog 'Copying executable'",
-    "  Copy-Item -LiteralPath (Join-Path $dist 'RaphiiWinUtils.exe') -Destination (Join-Path $install 'RaphiiWinUtils.exe') -Force",
+    "  $app = Join-Path $install 'app'",
+    "  Write-UpdateLog 'Copying Node application'",
+    "  if (Test-Path -LiteralPath $app) { Remove-Item -LiteralPath $app -Recurse -Force }",
+    "  Copy-Item -LiteralPath (Join-Path $dist 'app') -Destination $app -Recurse -Force",
     "  $helpers = Join-Path $install 'helpers'",
     "  Write-UpdateLog 'Copying helpers'",
     "  if (Test-Path -LiteralPath $helpers) { Remove-Item -LiteralPath $helpers -Recurse -Force }",
@@ -281,19 +289,14 @@ function stageAndRestart(sourceDir: string, installDir: string, revision: string
     "Start-Process -FilePath 'powershell.exe' -ArgumentList $args -WindowStyle Hidden"
   ].join("; ");
 
-  const launch = Bun.spawnSync(
-    ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", launchCommand],
-    {
-      windowsHide: true,
-      stdout: "pipe",
-      stderr: "pipe"
-    }
+  const launch = spawnSync(
+    "powershell.exe",
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", launchCommand],
+    { windowsHide: true, encoding: "utf8" }
   );
 
-  if (launch.exitCode !== 0) {
-    const stderr = new TextDecoder().decode(launch.stderr);
-    const stdout = new TextDecoder().decode(launch.stdout);
-    throw new Error(`Failed to launch update handoff: ${stdout}\n${stderr}`.trim());
+  if (launch.status !== 0) {
+    throw new Error(`Failed to launch update handoff: ${launch.stdout}\n${launch.stderr}`.trim());
   }
 
   process.exit(0);

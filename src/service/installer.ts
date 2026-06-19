@@ -7,11 +7,12 @@ import {
   rmSync,
   writeFileSync
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { dirname, isAbsolute, join } from "node:path";
-import type { AppConfig } from "../config/schema";
-import { Logger } from "../system/logger";
-import { getSnoreToastPath } from "../system/paths";
-import { requireSuccess } from "../system/process";
+import type { AppConfig } from "../config/schema.ts";
+import { Logger } from "../system/logger.ts";
+import { getNodeExecutablePath, getNpmCliPath, getSnoreToastPath } from "../system/paths.ts";
+import { requireSuccess } from "../system/process.ts";
 
 export async function installLocal(config: AppConfig, logger: Logger): Promise<void> {
   const log = logger.child("install");
@@ -20,9 +21,17 @@ export async function installLocal(config: AppConfig, logger: Logger): Promise<v
 
   mkdirSync(installDir, { recursive: true });
 
-  log.info("Building current source");
-  await requireSuccess("bun", ["install"], { cwd: process.cwd(), timeoutMs: 120_000 });
-  await requireSuccess("bun", ["run", "build:all"], { cwd: process.cwd(), timeoutMs: 180_000 });
+  log.info("Building current source with Node", { node: process.version });
+  const nodePath = getNodeExecutablePath();
+  const npmCli = getNpmCliPath();
+  await requireSuccess(nodePath, [npmCli, "install"], {
+    cwd: process.cwd(),
+    timeoutMs: 120_000
+  });
+  await requireSuccess(nodePath, [npmCli, "run", "build:all"], {
+    cwd: process.cwd(),
+    timeoutMs: 180_000
+  });
 
   log.info("Deploying build", { installDir });
   copyBuildArtifacts(join(process.cwd(), "dist"), installDir);
@@ -49,15 +58,21 @@ export async function installLocal(config: AppConfig, logger: Logger): Promise<v
 
   registerWindowsIntegration(installDir, config.notifications.appName);
   await installPushUpdateHook(config, log);
-  log.info("Install complete", { exe: join(installDir, "RaphiiWinUtils.exe") });
+  log.info("Install complete", {
+    node: nodePath,
+    entrypoint: join(installDir, "app", "src", "main.ts")
+  });
 }
 
 export function copyBuildArtifacts(fromDir: string, installDir: string): void {
-  const exe = join(fromDir, "RaphiiWinUtils.exe");
+  const app = join(fromDir, "app");
   const helpers = join(fromDir, "helpers");
-  if (!existsSync(exe)) throw new Error(`Missing built executable: ${exe}`);
+  if (!existsSync(app)) throw new Error(`Missing staged application: ${app}`);
 
-  cpSync(exe, join(installDir, "RaphiiWinUtils.exe"), { force: true });
+  const targetApp = join(installDir, "app");
+  rmSync(targetApp, { recursive: true, force: true });
+  cpSync(app, targetApp, { recursive: true, force: true });
+  rmSync(join(installDir, "RaphiiWinUtils.exe"), { force: true });
   if (existsSync(helpers)) {
     const targetHelpers = join(installDir, "helpers");
     rmSync(targetHelpers, { recursive: true, force: true });
@@ -66,20 +81,19 @@ export function copyBuildArtifacts(fromDir: string, installDir: string): void {
 }
 
 function registerWindowsIntegration(installDir: string, appName: string): void {
-  const exePath = join(installDir, "RaphiiWinUtils.exe");
   const launcherPath = writeLauncherScript(installDir);
-  const snoreInstall = Bun.spawnSync([
+  const nodePath = getNodeExecutablePath();
+  const snoreInstall = spawnSync(
     getSnoreToastPath(),
-    "-install",
-    appName,
-    exePath,
-    "Raphiiko.RaphiiWinUtils"
-  ]);
+    ["-install", appName, nodePath, "Raphiiko.RaphiiWinUtils"],
+    {
+      windowsHide: true,
+      encoding: "utf8"
+    }
+  );
 
-  if (snoreInstall.exitCode !== 0) {
-    throw new Error(
-      `Failed to register notification shortcut: ${new TextDecoder().decode(snoreInstall.stderr)}`
-    );
+  if (snoreInstall.status !== 0) {
+    throw new Error(`Failed to register notification shortcut: ${snoreInstall.stderr}`);
   }
 
   removeStartupShortcut(appName);
@@ -87,12 +101,13 @@ function registerWindowsIntegration(installDir: string, appName: string): void {
 }
 
 export function writeLauncherScript(installDir: string): string {
-  const exePath = join(installDir, "RaphiiWinUtils.exe");
+  const entrypoint = join(installDir, "app", "src", "main.ts");
   const launcherPath = join(installDir, "RaphiiWinUtils.launch.vbs");
+  const command = `"""${vbs(getNodeExecutablePath())}"" ""${vbs(entrypoint)}"" run"`;
   const script = [
     'Set shell = CreateObject("WScript.Shell")',
     `shell.CurrentDirectory = "${vbs(installDir)}"`,
-    `shell.Run """${vbs(exePath)}"" run", 0, False`
+    `shell.Run ${command}, 0, False`
   ].join("\r\n");
   writeFileSync(launcherPath, `${script}\r\n`, "utf8");
   return launcherPath;
@@ -125,18 +140,16 @@ function registerLogonTask(installDir: string, appName: string, launcherPath: st
     `Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description "${ps(appName)} background service" -Force | Out-Null`
   ].join("; ");
 
-  const taskResult = Bun.spawnSync([
+  const taskResult = spawnSync(
     "powershell.exe",
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-Command",
-    script
-  ]);
-  if (taskResult.exitCode !== 0) {
-    throw new Error(
-      `Failed to register logon task: ${new TextDecoder().decode(taskResult.stderr)}`
-    );
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+    {
+      windowsHide: true,
+      encoding: "utf8"
+    }
+  );
+  if (taskResult.status !== 0) {
+    throw new Error(`Failed to register logon task: ${taskResult.stderr}`);
   }
 }
 

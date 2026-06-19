@@ -1,19 +1,26 @@
 import { Elysia } from "elysia";
-import type { ControlConfig } from "../config/schema";
-import { Logger } from "../system/logger";
-import { AudioModeService, UnknownAudioModeError } from "./audioModeService";
-import type { Updater } from "./updater";
+import { node } from "@elysiajs/node";
+import type { ControlConfig } from "../config/schema.ts";
+import { Logger } from "../system/logger.ts";
+import { AudioModeService, UnknownAudioModeError } from "./audioModeService.ts";
+import type { Updater } from "./updater.ts";
 
 export class ControlServer {
   private readonly log: Logger;
+  private readonly config: ControlConfig;
+  private readonly updater: Updater;
+  private readonly audioModes: AudioModeService;
   private app?: { stop: () => unknown };
 
   constructor(
-    private readonly config: ControlConfig,
-    private readonly updater: Updater,
-    private readonly audioModes: AudioModeService,
+    config: ControlConfig,
+    updater: Updater,
+    audioModes: AudioModeService,
     logger: Logger
   ) {
+    this.config = config;
+    this.updater = updater;
+    this.audioModes = audioModes;
     this.log = logger.child("control");
   }
 
@@ -23,7 +30,7 @@ export class ControlServer {
       return;
     }
 
-    this.app = new Elysia()
+    this.app = new Elysia({ adapter: node() })
       .get("/health", () => ({
         ok: true,
         service: "RaphiiWinUtils",

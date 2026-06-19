@@ -1,9 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
-import type { ClipboardAutomationConfig } from "../config/schema";
-import { patchClipboardLinks } from "../clipboard/linkReplacements";
-import { getClipboardHelperPath } from "../system/paths";
-import { Logger } from "../system/logger";
+import type { ClipboardAutomationConfig } from "../config/schema.ts";
+import { patchClipboardLinks } from "../clipboard/linkReplacements.ts";
+import { getClipboardHelperPath } from "../system/paths.ts";
+import { Logger } from "../system/logger.ts";
 
 const restartDelayMs = 1000;
 
@@ -15,6 +15,7 @@ interface ClipboardWatcherMessage {
 
 export class ClipboardAutomationService {
   private readonly log: Logger;
+  private readonly config: ClipboardAutomationConfig;
   private child?: ChildProcessWithoutNullStreams;
   private buffer = "";
   private restartTimer?: ReturnType<typeof setTimeout>;
@@ -25,10 +26,8 @@ export class ClipboardAutomationService {
   private checkAgain = false;
   private lastObserved?: string;
 
-  constructor(
-    private readonly config: ClipboardAutomationConfig,
-    logger: Logger
-  ) {
+  constructor(config: ClipboardAutomationConfig, logger: Logger) {
+    this.config = config;
     this.log = logger.child("clipboard");
   }
 

@@ -1,12 +1,12 @@
-import type { AppConfig } from "../config/schema";
-import { ClipboardAutomationService } from "../service/clipboardAutomationService";
-import { AudioModeService } from "../service/audioModeService";
-import { ChannelVolumeService } from "../service/channelVolumeService";
-import { ControlServer } from "../service/controlServer";
-import { Updater } from "../service/updater";
-import { Logger } from "../system/logger";
-import type { Notifier } from "../system/notify";
-import type { AppModule } from "./appModule";
+import type { AppConfig } from "../config/schema.ts";
+import { ClipboardAutomationService } from "../service/clipboardAutomationService.ts";
+import { AudioModeService } from "../service/audioModeService.ts";
+import { ChannelVolumeService } from "../service/channelVolumeService.ts";
+import { ControlServer } from "../service/controlServer.ts";
+import { Updater } from "../service/updater.ts";
+import { Logger } from "../system/logger.ts";
+import type { Notifier } from "../system/notify.ts";
+import type { AppModule } from "./appModule.ts";
 
 export function createServiceModules(
   config: AppConfig,

@@ -1,6 +1,6 @@
 import { distinctUntilChanged, map, mergeMap, type Observable } from "rxjs";
-import type { AudioConfig } from "../config/schema";
-import type { AudioEndpointState, ChannelState } from "./types";
+import type { AudioConfig } from "../config/schema.ts";
+import type { AudioEndpointState, ChannelState } from "./types.ts";
 
 export function mapEndpointsToChannels(
   endpointSnapshots$: Observable<AudioEndpointState[]>,
@@ -46,8 +46,7 @@ export function mapEndpointsToChannels(
   );
 }
 
-function scalarToDb(scalar: number, minDb: number, maxDb: number): number {
-  if (scalar <= 0.0001) return minDb;
-  const db = 20 * Math.log10(Math.max(0.0001, Math.min(1, scalar)));
-  return Math.max(minDb, Math.min(maxDb, db));
+export function scalarToDb(scalar: number, minDb: number, maxDb: number): number {
+  const clampedScalar = Math.max(0, Math.min(1, scalar));
+  return minDb + clampedScalar * (maxDb - minDb);
 }

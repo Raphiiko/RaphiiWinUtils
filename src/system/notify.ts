@@ -1,15 +1,14 @@
 import { spawn } from "node:child_process";
-import type { NotificationConfig } from "../config/schema";
-import { Logger } from "./logger";
-import { getSnoreToastPath } from "./paths";
+import type { NotificationConfig } from "../config/schema.ts";
+import { Logger } from "./logger.ts";
+import { getSnoreToastPath } from "./paths.ts";
 
 export class Notifier {
   private readonly log: Logger;
+  private readonly config: NotificationConfig;
 
-  constructor(
-    private readonly config: NotificationConfig,
-    logger: Logger
-  ) {
+  constructor(config: NotificationConfig, logger: Logger) {
+    this.config = config;
     this.log = logger.child("notify");
   }
 

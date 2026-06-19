@@ -1,11 +1,11 @@
-import { loadConfig } from "./config/loadConfig";
-import { Logger } from "./system/logger";
-import { Notifier } from "./system/notify";
-import { notifyCompletedUpdateIfNeeded } from "./service/updater";
-import { installLocal } from "./service/installer";
-import { acquireSingleInstanceLock } from "./system/singleInstance";
-import { createServiceModules } from "./modules/serviceModules";
-import { startModules, stopModules } from "./modules/appModule";
+import { loadConfig } from "./config/loadConfig.ts";
+import { Logger } from "./system/logger.ts";
+import { Notifier } from "./system/notify.ts";
+import { notifyCompletedUpdateIfNeeded } from "./service/updater.ts";
+import { installLocal } from "./service/installer.ts";
+import { acquireSingleInstanceLock } from "./system/singleInstance.ts";
+import { createServiceModules } from "./modules/serviceModules.ts";
+import { startModules, stopModules } from "./modules/appModule.ts";
 
 const logger = new Logger("raphii-win-utils");
 

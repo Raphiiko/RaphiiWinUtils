@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { Logger } from "./logger";
+import { Logger } from "./logger.ts";
 
 interface LockFile {
   pid: number;

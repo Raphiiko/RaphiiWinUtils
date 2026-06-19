@@ -23,11 +23,12 @@ const maxLogFileBytes = 10 * 1024 * 1024;
 
 export class Logger {
   private readonly logDir: string;
+  private readonly scope: string;
+  private readonly minLevel: LogLevel;
 
-  constructor(
-    private readonly scope: string,
-    private readonly minLevel: LogLevel = "info"
-  ) {
+  constructor(scope: string, minLevel: LogLevel = "info") {
+    this.scope = scope;
+    this.minLevel = minLevel;
     const appData =
       process.env.APPDATA ?? join(process.env.USERPROFILE ?? ".", "AppData", "Roaming");
     this.logDir = join(appData, "RaphiiWinUtils", "logs");

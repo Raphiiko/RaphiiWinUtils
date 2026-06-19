@@ -1,6 +1,6 @@
 import dgram from "node:dgram";
-import type { MatrixConfig } from "../config/schema";
-import { Logger } from "../system/logger";
+import type { MatrixConfig } from "../config/schema.ts";
+import { Logger } from "../system/logger.ts";
 
 const VBAN_HEADER_BYTES = 28;
 const MAX_TEXT_BYTES = 1436;
@@ -9,11 +9,10 @@ export class VbanTextClient {
   private frame = 0;
   private readonly socket = dgram.createSocket("udp4");
   private readonly log: Logger;
+  private readonly config: MatrixConfig;
 
-  constructor(
-    private readonly config: MatrixConfig,
-    logger: Logger
-  ) {
+  constructor(config: MatrixConfig, logger: Logger) {
+    this.config = config;
     this.log = logger.child("vban");
   }
 

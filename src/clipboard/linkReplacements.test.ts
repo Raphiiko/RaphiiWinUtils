@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
-import { patchClipboardLinks } from "./linkReplacements";
+import assert from "node:assert/strict";
+import { describe, test } from "node:test";
+import { patchClipboardLinks } from "./linkReplacements.ts";
 
-describe("patchClipboardLinks", () => {
-  test.each([
+await describe("patchClipboardLinks", async () => {
+  const cases = [
     ["https://x.com/Raphiiko/status/123", "https://girlcockx.com/Raphiiko/status/123"],
     ["https://twitter.com/Raphiiko/status/123", "https://girlcockx.com/Raphiiko/status/123"],
     ["https://www.tiktok.com/@raphii/video/123", "https://www.tnktok.com/@raphii/video/123"],
@@ -20,15 +21,19 @@ describe("patchClipboardLinks", () => {
       "https://www.instagram.com/reel/ABC123/?igsh=foo",
       "https://kkinstagram.com/reel/ABC123/?igsh=foo"
     ]
-  ])("rewrites %s", (input, expected) => {
-    expect(patchClipboardLinks(input).content).toBe(expected);
-  });
+  ] as const;
 
-  test("leaves unrelated clipboard text alone", () => {
+  for (const [input, expected] of cases) {
+    await test(`rewrites ${input}`, () => {
+      assert.equal(patchClipboardLinks(input).content, expected);
+    });
+  }
+
+  await test("leaves unrelated clipboard text alone", () => {
     const input = "no links here";
     const result = patchClipboardLinks(input);
 
-    expect(result.content).toBe(input);
-    expect(result.appliedRules).toEqual([]);
+    assert.equal(result.content, input);
+    assert.deepEqual(result.appliedRules, []);
   });
 });
