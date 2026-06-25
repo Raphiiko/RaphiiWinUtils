@@ -43,7 +43,9 @@
     "mainOutputSlot": "WIN1.OUT",
     "micMixOutputSlot": "VAIO1",
     "micOutputChannels": [1, 2],
+    "defaultChannelVolumeCapPercent": 30,
     "engineSettleMs": 2500,
+    "outputRetryCount": 2,
     "routeRetryCount": 5,
     "routeRetryDelayMs": 500,
     "modes": {
@@ -60,6 +62,9 @@
         "name": "Beyond",
         "outputDeviceName": "Bigscreen Beyond (USB-C to 3.5mm Headphone Jack Adapter)",
         "micInputSlot": "WIN3.IN",
+        "channelVolumeOverrides": {
+          "Game": 100
+        },
         "micRoutes": [
           { "inputChannel": 1, "outputChannel": 1 },
           { "inputChannel": 2, "outputChannel": 2 }
@@ -102,6 +107,11 @@
         ]
       }
     }
+  },
+  "homeAssistant": {
+    "enabled": false,
+    "audioModeWebhookUrl": "",
+    "requestTimeoutMs": 3000
   },
   "clipboard": {
     "enabled": true,

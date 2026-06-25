@@ -1,6 +1,26 @@
 import type { AppConfig, AudioModeConfig, AudioModeMicRoute } from "../config/schema.ts";
+import {
+  WindowsAudioEndpointVolumeController,
+  type AudioEndpointVolumeController
+} from "../audio/audioEndpointVolumeController.ts";
+import { buildAudioModeVolumePolicies } from "../audio/audioModeVolumePolicies.ts";
+import type { AudioModePublisher } from "../homeAssistant/audioModeWebhook.ts";
 import { VbanTextClient } from "../matrix/vbanTextClient.ts";
 import { Logger } from "../system/logger.ts";
+
+interface MatrixTextClient {
+  send(command: string): Promise<void>;
+  request(command: string, timeoutMs?: number): Promise<string[]>;
+  close(): Promise<void>;
+}
+
+interface AudioModeServiceDependencies {
+  createMatrixClient?: () => MatrixTextClient;
+  delay?: (ms: number) => Promise<void>;
+  volumeController?: AudioEndpointVolumeController;
+}
+
+const preSwitchVolumePolicyWaitMs = 1_000;
 
 export interface AudioModeSummary {
   id: string;
@@ -13,10 +33,25 @@ export interface AudioModeSummary {
 export class AudioModeService {
   private readonly log: Logger;
   private readonly config: AppConfig;
+  private readonly publisher: AudioModePublisher;
+  private readonly createMatrixClient: () => MatrixTextClient;
+  private readonly delay: (ms: number) => Promise<void>;
+  private readonly volumeController: AudioEndpointVolumeController;
 
-  constructor(config: AppConfig, logger: Logger) {
+  constructor(
+    config: AppConfig,
+    logger: Logger,
+    publisher: AudioModePublisher,
+    dependencies: AudioModeServiceDependencies = {}
+  ) {
     this.config = config;
     this.log = logger.child("audio-modes");
+    this.publisher = publisher;
+    this.createMatrixClient =
+      dependencies.createMatrixClient ?? (() => new VbanTextClient(this.config.matrix, this.log));
+    this.delay = dependencies.delay ?? delay;
+    this.volumeController =
+      dependencies.volumeController ?? new WindowsAudioEndpointVolumeController(this.log);
   }
 
   listModes(): AudioModeSummary[] {
@@ -51,8 +86,31 @@ export class AudioModeService {
       );
     }
 
-    await this.sendMatrixCommand(outputCommand);
-    await delay(this.config.audioModes.engineSettleMs);
+    const summary = {
+      id,
+      name: mode.name,
+      outputDeviceName: mode.outputDeviceName,
+      micInputSlot: mode.micInputSlot,
+      micRoutes: mode.micRoutes
+    };
+    const volumePolicies = buildAudioModeVolumePolicies(this.config, mode);
+
+    const publishPromise = this.publisher
+      .publishMode(summary, this.listModes())
+      .catch((error: unknown) => {
+        this.log.warn("Could not publish requested audio mode to Home Assistant", {
+          id,
+          error: String(error)
+        });
+      });
+
+    const beforeOutputVolumePromise = this.applyPreOutputVolumePolicies(
+      id,
+      volumePolicies.beforeOutputSwitch
+    );
+    const outputVerification = await this.applyOutputWithRetry(mode, outputCommand);
+    await beforeOutputVolumePromise;
+    await this.volumeController.apply(volumePolicies.afterOutputSwitch);
 
     const verification = await this.applyMicRoutingWithRetry(mode, resetCommand, routeCommand);
 
@@ -62,16 +120,14 @@ export class AudioModeService {
       outputDeviceName: mode.outputDeviceName,
       micInputSlot: mode.micInputSlot,
       micRoutes: mode.micRoutes,
+      outputAttempts: outputVerification.attempts,
+      matrixRestarted: outputVerification.matrixRestarted,
       routeAttempts: verification.attempts
     });
 
-    return {
-      id,
-      name: mode.name,
-      outputDeviceName: mode.outputDeviceName,
-      micInputSlot: mode.micInputSlot,
-      micRoutes: mode.micRoutes
-    };
+    await publishPromise;
+
+    return summary;
   }
 
   stop(): void {
@@ -103,9 +159,75 @@ export class AudioModeService {
   }
 
   private async sendMatrixCommand(command: string): Promise<void> {
-    const client = new VbanTextClient(this.config.matrix, this.log);
+    const client = this.createMatrixClient();
     try {
       await client.send(command);
+    } finally {
+      await client.close();
+    }
+  }
+
+  private async applyPreOutputVolumePolicies(
+    modeId: string,
+    policies: Parameters<AudioEndpointVolumeController["apply"]>[0]
+  ): Promise<void> {
+    let completed = false;
+    const applyPromise = this.volumeController.apply(policies).finally(() => {
+      completed = true;
+    });
+
+    await Promise.race([applyPromise, this.delay(preSwitchVolumePolicyWaitMs)]);
+    if (!completed) {
+      this.log.warn("Audio endpoint volume cap is slow; switching output while it continues", {
+        modeId,
+        waitMs: preSwitchVolumePolicyWaitMs
+      });
+    }
+
+    await applyPromise;
+  }
+
+  private async applyOutputWithRetry(
+    mode: AudioModeConfig,
+    outputCommand: string
+  ): Promise<{ attempts: number; matrixRestarted: boolean }> {
+    const attempts = Math.max(1, this.config.audioModes.outputRetryCount);
+    let actualDeviceName: string | undefined;
+    let matrixRestarted = false;
+
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      await this.sendMatrixCommand(outputCommand);
+      await this.delay(this.config.audioModes.engineSettleMs);
+
+      actualDeviceName = await this.queryOutputDeviceName();
+      if (actualDeviceName === mode.outputDeviceName) {
+        return { attempts: attempt, matrixRestarted };
+      }
+
+      if (attempt >= attempts) break;
+
+      this.log.warn("Matrix output switch did not take effect; restarting audio engine", {
+        attempt,
+        expectedDeviceName: mode.outputDeviceName,
+        actualDeviceName
+      });
+      await this.sendMatrixCommand("Command.Restart = 1;");
+      matrixRestarted = true;
+      await this.delay(this.config.audioModes.engineSettleMs);
+    }
+
+    throw new Error(
+      `Could not switch ${this.config.audioModes.mainOutputSlot} to "${mode.outputDeviceName}"` +
+        ` after ${attempts} attempt(s); Matrix reports "${actualDeviceName ?? "no response"}"`
+    );
+  }
+
+  private async queryOutputDeviceName(): Promise<string | undefined> {
+    const command = `Slot(${this.config.audioModes.mainOutputSlot}).Device.WDM = ?;`;
+    const client = this.createMatrixClient();
+    try {
+      const responses = await client.request(command, 500);
+      return parseStringResponse(responses.find((response) => response.includes(".Device.WDM")));
     } finally {
       await client.close();
     }
@@ -121,9 +243,9 @@ export class AudioModeService {
 
     for (let attempt = 1; attempt <= attempts; attempt++) {
       await this.sendMatrixCommand(resetCommand);
-      await delay(100);
+      await this.delay(100);
       await this.sendMatrixCommand(routeCommand);
-      await delay(this.config.audioModes.routeRetryDelayMs);
+      await this.delay(this.config.audioModes.routeRetryDelayMs);
 
       const verification = await this.verifyMicRouting(mode);
       if (verification.ok) {
@@ -205,7 +327,7 @@ export class AudioModeService {
     outputChannel: number
   ): Promise<number | undefined> {
     const command = `Point(${inputSlot}[${inputChannel}],${this.config.audioModes.micMixOutputSlot}.OUT[${outputChannel}]).dBGain = ?;`;
-    const client = new VbanTextClient(this.config.matrix, this.log);
+    const client = this.createMatrixClient();
     try {
       const responses = await client.request(command, 500);
       return parseGainResponse(responses[0]);
@@ -269,6 +391,19 @@ function parseGainResponse(response: string | undefined): number | undefined {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseStringResponse(response: string | undefined): string | undefined {
+  if (!response) return undefined;
+
+  const match = response.match(/=\s*("(?:\\.|[^"])*");?\s*$/);
+  if (!match?.[1]) return undefined;
+
+  try {
+    return JSON.parse(match[1]) as string;
+  } catch {
+    return undefined;
+  }
 }
 
 function formatGain(gain: number): string {

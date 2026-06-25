@@ -2,6 +2,7 @@ export interface AppConfig {
   matrix: MatrixConfig;
   audio: AudioConfig;
   audioModes: AudioModesConfig;
+  homeAssistant: HomeAssistantConfig;
   clipboard: ClipboardAutomationConfig;
   updater: UpdaterConfig;
   control: ControlConfig;
@@ -34,7 +35,9 @@ export interface AudioModesConfig {
   mainOutputSlot: string;
   micMixOutputSlot: string;
   micOutputChannels: number[];
+  defaultChannelVolumeCapPercent: number;
   engineSettleMs: number;
+  outputRetryCount: number;
   routeRetryCount: number;
   routeRetryDelayMs: number;
   modes: Record<string, AudioModeConfig>;
@@ -45,11 +48,18 @@ export interface AudioModeConfig {
   outputDeviceName: string;
   micInputSlot: string;
   micRoutes: AudioModeMicRoute[];
+  channelVolumeOverrides?: Record<string, number>;
 }
 
 export interface AudioModeMicRoute {
   inputChannel: number;
   outputChannel: number;
+}
+
+export interface HomeAssistantConfig {
+  enabled: boolean;
+  audioModeWebhookUrl: string;
+  requestTimeoutMs: number;
 }
 
 export interface ClipboardAutomationConfig {
@@ -101,7 +111,9 @@ export const defaultConfig: AppConfig = {
     mainOutputSlot: "WIN1.OUT",
     micMixOutputSlot: "VAIO1",
     micOutputChannels: [1, 2],
+    defaultChannelVolumeCapPercent: 30,
     engineSettleMs: 2500,
+    outputRetryCount: 2,
     routeRetryCount: 5,
     routeRetryDelayMs: 500,
     modes: {
@@ -118,6 +130,9 @@ export const defaultConfig: AppConfig = {
         name: "Beyond",
         outputDeviceName: "Bigscreen Beyond (USB-C to 3.5mm Headphone Jack Adapter)",
         micInputSlot: "WIN3.IN",
+        channelVolumeOverrides: {
+          Game: 100
+        },
         micRoutes: [
           { inputChannel: 1, outputChannel: 1 },
           { inputChannel: 2, outputChannel: 2 }
@@ -160,6 +175,11 @@ export const defaultConfig: AppConfig = {
         ]
       }
     }
+  },
+  homeAssistant: {
+    enabled: false,
+    audioModeWebhookUrl: "",
+    requestTimeoutMs: 3000
   },
   clipboard: {
     enabled: true,

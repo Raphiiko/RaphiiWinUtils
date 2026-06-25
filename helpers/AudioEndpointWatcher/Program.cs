@@ -1,8 +1,15 @@
 using System.Collections.Concurrent;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using NAudio.CoreAudioApi;
 using NAudio.CoreAudioApi.Interfaces;
+
+if (TryParseVolumePolicies(args, out var volumePolicies))
+{
+    ApplyVolumePolicies(volumePolicies);
+    return;
+}
 
 var resyncMs = ParseResyncMs(args);
 try
@@ -14,6 +21,91 @@ catch (Exception ex)
 {
     Console.Error.WriteLine(ex);
     Environment.ExitCode = 1;
+}
+
+static bool TryParseVolumePolicies(string[] args, out VolumePolicy[] policies)
+{
+    const string prefix = "--apply-volume-policies-base64=";
+    var argument = args.FirstOrDefault(arg =>
+        arg.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+    if (argument is null)
+    {
+        policies = [];
+        return false;
+    }
+
+    var json = Encoding.UTF8.GetString(Convert.FromBase64String(argument[prefix.Length..]));
+    policies = JsonSerializer.Deserialize<VolumePolicy[]>(json, new JsonSerializerOptions
+    {
+        PropertyNameCaseInsensitive = true
+    }) ?? [];
+    return true;
+}
+
+static void ApplyVolumePolicies(IReadOnlyCollection<VolumePolicy> policies)
+{
+    using var enumerator = new MMDeviceEnumerator();
+    var devices = enumerator
+        .EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active)
+        .ToArray();
+    var results = new List<VolumePolicyResult>();
+
+    foreach (var policy in policies)
+    {
+        var matches = devices
+            .Where(device => device.FriendlyName.Contains(
+                policy.EndpointNameContains,
+                StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        if (matches.Length == 0)
+        {
+            results.Add(new VolumePolicyResult(
+                policy.EndpointNameContains,
+                null,
+                policy.VolumePercent,
+                policy.Mode,
+                false,
+                false,
+                null,
+                null));
+            continue;
+        }
+
+        foreach (var device in matches)
+        {
+            var previousScalar = device.AudioEndpointVolume.MasterVolumeLevelScalar;
+            var previousPercent = (int)Math.Round(previousScalar * 100);
+            var targetPercent = Math.Clamp(policy.VolumePercent, 0, 100);
+            var targetScalar = targetPercent / 100f;
+            var shouldChange = policy.Mode switch
+            {
+                "cap" => previousScalar > targetScalar + 0.0001f,
+                "set" => Math.Abs(previousScalar - targetScalar) > 0.0001f,
+                _ => throw new ArgumentException($"Unknown volume policy mode: {policy.Mode}")
+            };
+
+            if (shouldChange)
+            {
+                device.AudioEndpointVolume.MasterVolumeLevelScalar = targetScalar;
+            }
+
+            results.Add(new VolumePolicyResult(
+                policy.EndpointNameContains,
+                device.FriendlyName,
+                targetPercent,
+                policy.Mode,
+                true,
+                shouldChange,
+                previousPercent,
+                device.AudioEndpointVolume.Mute));
+        }
+    }
+
+    Console.WriteLine(JsonSerializer.Serialize(
+        new { type = "volume-policy-result", results },
+        new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+    foreach (var device in devices) device.Dispose();
 }
 
 static int ParseResyncMs(string[] args)
@@ -288,3 +380,18 @@ internal sealed record EndpointState(
             source);
     }
 }
+
+internal sealed record VolumePolicy(
+    string EndpointNameContains,
+    int VolumePercent,
+    string Mode);
+
+internal sealed record VolumePolicyResult(
+    string EndpointNameContains,
+    string? EndpointName,
+    int TargetVolumePercent,
+    string Mode,
+    bool Found,
+    bool Changed,
+    int? PreviousVolumePercent,
+    bool? Muted);

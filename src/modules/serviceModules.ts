@@ -1,4 +1,5 @@
 import type { AppConfig } from "../config/schema.ts";
+import { HomeAssistantAudioModeWebhook } from "../homeAssistant/audioModeWebhook.ts";
 import { ClipboardAutomationService } from "../service/clipboardAutomationService.ts";
 import { AudioModeService } from "../service/audioModeService.ts";
 import { ChannelVolumeService } from "../service/channelVolumeService.ts";
@@ -15,7 +16,8 @@ export function createServiceModules(
 ): AppModule[] {
   const updater = new Updater(config.updater, notifier, logger);
   const channelVolumeService = new ChannelVolumeService(config, logger);
-  const audioModeService = new AudioModeService(config, logger);
+  const audioModePublisher = new HomeAssistantAudioModeWebhook(config.homeAssistant);
+  const audioModeService = new AudioModeService(config, logger, audioModePublisher);
   const controlServer = new ControlServer(config.control, updater, audioModeService, logger);
   const clipboardAutomationService = new ClipboardAutomationService(config.clipboard, logger);
 
