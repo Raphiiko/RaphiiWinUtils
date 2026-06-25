@@ -13,12 +13,12 @@ export const linkReplacementRules: LinkReplacementRule[] = [
   {
     name: "x-status",
     pattern: /\bhttps?:\/\/x\.com\/([A-Za-z0-9_]{1,15})\/status/g,
-    replacement: "https://girlcockx.com/$1/status"
+    replacement: "https://fixvx.com/$1/status"
   },
   {
     name: "twitter-status",
     pattern: /\bhttps?:\/\/twitter\.com\/([A-Za-z0-9_]{1,15})\/status/g,
-    replacement: "https://girlcockx.com/$1/status"
+    replacement: "https://fixvx.com/$1/status"
   },
   {
     name: "tiktok-profile-video",

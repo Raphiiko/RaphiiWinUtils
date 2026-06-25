@@ -7,7 +7,7 @@ Volume/mute changes are event-driven through the `AudioEndpointWatcher` helper; 
 
 The clipboard workflow listens for text clipboard changes and rewrites social links to embed-friendly alternate frontends:
 
-- `x.com` / `twitter.com` status links -> `girlcockx.com`
+- `x.com` / `twitter.com` status links -> `fixvx.com`
 - `tiktok.com` / `vm.tiktok.com` links -> `tnktok.com`
 - `bsky.app` links -> `bskx.app`
 - `reddit.com` links -> `rxddit.com`
