@@ -9,6 +9,15 @@ import { startModules, stopModules } from "./modules/appModule.ts";
 
 const logger = new Logger("raphii-win-utils");
 
+process.on("unhandledRejection", (reason) => {
+  logger.error("Unhandled promise rejection", { error: String(reason) });
+});
+
+process.on("uncaughtException", (error) => {
+  logger.error("Uncaught exception", { error: String(error) });
+  process.exit(1);
+});
+
 async function main(): Promise<void> {
   const config = await loadConfig();
   const notifier = new Notifier(config.notifications, logger);

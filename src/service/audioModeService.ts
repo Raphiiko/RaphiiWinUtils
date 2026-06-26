@@ -37,6 +37,7 @@ export class AudioModeService {
   private readonly createMatrixClient: () => MatrixTextClient;
   private readonly delay: (ms: number) => Promise<void>;
   private readonly volumeController: AudioEndpointVolumeController;
+  private applyModeTail: Promise<unknown> = Promise.resolve();
 
   constructor(
     config: AppConfig,
@@ -69,6 +70,12 @@ export class AudioModeService {
   }
 
   async applyMode(id: string): Promise<AudioModeSummary> {
+    const operation = this.applyModeTail.then(() => this.applyModeOnce(id));
+    this.applyModeTail = operation.catch(() => undefined);
+    return operation;
+  }
+
+  private async applyModeOnce(id: string): Promise<AudioModeSummary> {
     const mode = this.getMode(id);
     if (!mode) {
       throw new UnknownAudioModeError(id);
@@ -95,21 +102,33 @@ export class AudioModeService {
     };
     const volumePolicies = buildAudioModeVolumePolicies(this.config, mode);
 
-    const publishPromise = this.publisher
-      .publishMode(summary, this.listModes())
-      .catch((error: unknown) => {
-        this.log.warn("Could not publish requested audio mode to Home Assistant", {
-          id,
-          error: String(error)
-        });
-      });
+    await this.publishRequestedMode(id, summary);
 
     const beforeOutputVolumePromise = this.applyPreOutputVolumePolicies(
       id,
       volumePolicies.beforeOutputSwitch
+    ).then(
+      () => undefined,
+      (error: unknown) => error
     );
-    const outputVerification = await this.applyOutputWithRetry(mode, outputCommand);
-    await beforeOutputVolumePromise;
+
+    let outputVerification: { attempts: number; matrixRestarted: boolean };
+    try {
+      outputVerification = await this.applyOutputWithRetry(mode, outputCommand);
+    } catch (error) {
+      const volumeError = await beforeOutputVolumePromise;
+      if (volumeError) {
+        this.log.warn("Pre-output volume policy failed after output switch failure", {
+          id,
+          error: formatUnknownError(volumeError)
+        });
+      }
+      throw error;
+    }
+
+    const volumeError = await beforeOutputVolumePromise;
+    if (volumeError) throw toError(volumeError);
+
     await this.volumeController.apply(volumePolicies.afterOutputSwitch);
 
     const verification = await this.applyMicRoutingWithRetry(mode, resetCommand, routeCommand);
@@ -124,8 +143,6 @@ export class AudioModeService {
       matrixRestarted: outputVerification.matrixRestarted,
       routeAttempts: verification.attempts
     });
-
-    await publishPromise;
 
     return summary;
   }
@@ -156,6 +173,17 @@ export class AudioModeService {
       )}]).Reset;`,
       `${routeCommands.join(";")};`
     ];
+  }
+
+  private async publishRequestedMode(id: string, summary: AudioModeSummary): Promise<void> {
+    try {
+      await this.publisher.publishMode(summary, this.listModes());
+    } catch (error: unknown) {
+      this.log.warn("Could not publish requested audio mode to Home Assistant", {
+        id,
+        error: formatUnknownError(error)
+      });
+    }
   }
 
   private async sendMatrixCommand(command: string): Promise<void> {
@@ -408,4 +436,19 @@ function parseStringResponse(response: string | undefined): string | undefined {
 
 function formatGain(gain: number): string {
   return gain === Number.NEGATIVE_INFINITY ? "-inf" : gain.toFixed(1);
+}
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(formatUnknownError(error));
+}
+
+function formatUnknownError(error: unknown): string {
+  if (error instanceof Error) return `${error.name}: ${error.message}`;
+  if (typeof error === "string") return error;
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return Object.prototype.toString.call(error);
+  }
 }

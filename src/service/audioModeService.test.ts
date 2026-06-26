@@ -75,14 +75,35 @@ void test("applies mode overrides only after the new output is selected", async 
   assert.deepEqual(events.slice(0, 3), ["cap", "output", "set"]);
 });
 
+void test("publishes the requested mode before switching the Matrix output", async () => {
+  const events: string[] = [];
+  const matrix = new FakeMatrixClient("Desktop Speakers", false, true, (command) => {
+    if (command.includes('.Device.WDM = "Nothing Ear"')) events.push("output");
+  });
+  const publisher = new DeferredPublisher(() => events.push("publish"));
+  const service = createService(matrix, { publisher });
+
+  const applyPromise = service.applyMode("tws");
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.deepEqual(events, []);
+
+  publisher.resolve();
+  await applyPromise;
+
+  assert.deepEqual(events.slice(0, 2), ["publish", "output"]);
+});
+
 void test("switches the output while a slow pre-switch volume cap continues", async () => {
   const matrix = new FakeMatrixClient("Desktop Speakers");
   const volumeController = new DeferredFirstVolumeController();
   const service = createService(matrix, { volumeController });
 
   const applyPromise = service.applyMode("tws");
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let i = 0; i < 5; i += 1) {
+    await Promise.resolve();
+  }
 
   assert.equal(matrix.currentDeviceName, "Nothing Ear");
   assert.equal(volumeController.applyCount, 1);
@@ -96,6 +117,7 @@ function createService(
   options: {
     channelVolumeOverrides?: Record<string, number>;
     volumeController?: AudioEndpointVolumeController;
+    publisher?: AudioModePublisher;
   } = {}
 ): AudioModeService {
   const config = structuredClone(defaultConfig);
@@ -114,7 +136,7 @@ function createService(
     }
   };
 
-  return new AudioModeService(config, logger, publisher, {
+  return new AudioModeService(config, logger, options.publisher ?? publisher, {
     createMatrixClient: () => matrix,
     delay: () => Promise.resolve(),
     volumeController: options.volumeController ?? new FakeVolumeController()
@@ -145,6 +167,28 @@ class DeferredFirstVolumeController implements AudioEndpointVolumeController {
 
   resolveFirstApply(): void {
     this.resolveFirst?.();
+  }
+}
+
+class DeferredPublisher implements AudioModePublisher {
+  private resolvePublish?: () => void;
+  private readonly onPublish: () => void;
+
+  constructor(onPublish: () => void) {
+    this.onPublish = onPublish;
+  }
+
+  publishMode(): Promise<void> {
+    return new Promise((resolve) => {
+      this.resolvePublish = () => {
+        this.onPublish();
+        resolve();
+      };
+    });
+  }
+
+  resolve(): void {
+    this.resolvePublish?.();
   }
 }
 

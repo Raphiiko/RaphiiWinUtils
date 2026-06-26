@@ -107,7 +107,8 @@ export function writeLauncherScript(installDir: string): string {
   const script = [
     'Set shell = CreateObject("WScript.Shell")',
     `shell.CurrentDirectory = "${vbs(installDir)}"`,
-    `shell.Run ${command}, 0, False`
+    `exitCode = shell.Run(${command}, 0, True)`,
+    "WScript.Quit exitCode"
   ].join("\r\n");
   writeFileSync(launcherPath, `${script}\r\n`, "utf8");
   return launcherPath;
@@ -136,7 +137,7 @@ function registerLogonTask(installDir: string, appName: string, launcherPath: st
     '$action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ("//B //Nologo `"" + $launcherPath + "`"") -WorkingDirectory $installDir',
     "$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user",
     "$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited",
-    "$settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Seconds 0)",
+    "$settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)",
     `Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description "${ps(appName)} background service" -Force | Out-Null`
   ].join("; ");
 
