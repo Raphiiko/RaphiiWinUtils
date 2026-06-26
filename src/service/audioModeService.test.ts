@@ -75,7 +75,7 @@ void test("applies mode overrides only after the new output is selected", async 
   assert.deepEqual(events.slice(0, 3), ["cap", "output", "set"]);
 });
 
-void test("publishes the requested mode before switching the Matrix output", async () => {
+void test("starts publishing the requested mode without delaying the Matrix output", async () => {
   const events: string[] = [];
   const matrix = new FakeMatrixClient("Desktop Speakers", false, true, (command) => {
     if (command.includes('.Device.WDM = "Nothing Ear"')) events.push("output");
@@ -84,15 +84,14 @@ void test("publishes the requested mode before switching the Matrix output", asy
   const service = createService(matrix, { publisher });
 
   const applyPromise = service.applyMode("tws");
-  await Promise.resolve();
-  await Promise.resolve();
-
-  assert.deepEqual(events, []);
-
-  publisher.resolve();
-  await applyPromise;
+  for (let i = 0; i < 5; i += 1) {
+    await Promise.resolve();
+  }
 
   assert.deepEqual(events.slice(0, 2), ["publish", "output"]);
+  assert.equal(matrix.currentDeviceName, "Nothing Ear");
+  publisher.resolve();
+  await applyPromise;
 });
 
 void test("switches the output while a slow pre-switch volume cap continues", async () => {
@@ -179,11 +178,9 @@ class DeferredPublisher implements AudioModePublisher {
   }
 
   publishMode(): Promise<void> {
+    this.onPublish();
     return new Promise((resolve) => {
-      this.resolvePublish = () => {
-        this.onPublish();
-        resolve();
-      };
+      this.resolvePublish = resolve;
     });
   }
 

@@ -102,7 +102,7 @@ export class AudioModeService {
     };
     const volumePolicies = buildAudioModeVolumePolicies(this.config, mode);
 
-    await this.publishRequestedMode(id, summary);
+    void this.publishRequestedMode(id, summary);
 
     const beforeOutputVolumePromise = this.applyPreOutputVolumePolicies(
       id,
