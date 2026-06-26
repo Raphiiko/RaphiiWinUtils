@@ -10,11 +10,12 @@ import { startModules, stopModules } from "./modules/appModule.ts";
 const logger = new Logger("raphii-win-utils");
 
 process.on("unhandledRejection", (reason) => {
-  logger.error("Unhandled promise rejection", { error: String(reason) });
+  logger.error("Unhandled promise rejection", { error: formatUnknownError(reason) });
+  process.exit(1);
 });
 
 process.on("uncaughtException", (error) => {
-  logger.error("Uncaught exception", { error: String(error) });
+  logger.error("Uncaught exception", { error: formatUnknownError(error) });
   process.exit(1);
 });
 
@@ -59,6 +60,17 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  logger.error("Fatal startup failure", { error: String(error) });
+  logger.error("Fatal startup failure", { error: formatUnknownError(error) });
   process.exitCode = 1;
 });
+
+function formatUnknownError(error: unknown): string {
+  if (error instanceof Error) return `${error.name}: ${error.message}`;
+  if (typeof error === "string") return error;
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return Object.prototype.toString.call(error);
+  }
+}
