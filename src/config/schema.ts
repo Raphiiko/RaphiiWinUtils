@@ -4,6 +4,7 @@ export interface AppConfig {
   audioModes: AudioModesConfig;
   homeAssistant: HomeAssistantConfig;
   clipboard: ClipboardAutomationConfig;
+  xsOverlayRecovery: XsOverlayRecoveryConfig;
   updater: UpdaterConfig;
   control: ControlConfig;
   notifications: NotificationConfig;
@@ -65,6 +66,18 @@ export interface HomeAssistantConfig {
 export interface ClipboardAutomationConfig {
   enabled: boolean;
   debounceMs: number;
+}
+
+export interface XsOverlayRecoveryConfig {
+  enabled: boolean;
+  pollMs: number;
+  missingConfirmationMs: number;
+  launchGraceMs: number;
+  retryDelaysMs: number[];
+  maxLaunchAttempts: number;
+  healthyResetMs: number;
+  steamPath: string;
+  steamAppId: string;
 }
 
 export interface UpdaterConfig {
@@ -184,6 +197,17 @@ export const defaultConfig: AppConfig = {
   clipboard: {
     enabled: true,
     debounceMs: 100
+  },
+  xsOverlayRecovery: {
+    enabled: true,
+    pollMs: 2000,
+    missingConfirmationMs: 3000,
+    launchGraceMs: 20000,
+    retryDelaysMs: [3000, 15000, 60000, 300000],
+    maxLaunchAttempts: 5,
+    healthyResetMs: 60000,
+    steamPath: "C:\\Program Files (x86)\\Steam\\steam.exe",
+    steamAppId: "1173510"
   },
   updater: {
     enabled: true,

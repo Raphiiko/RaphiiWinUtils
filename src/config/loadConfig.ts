@@ -38,6 +38,7 @@ function mergeConfig(base: AppConfig, override: Partial<AppConfig>): AppConfig {
     },
     homeAssistant: { ...base.homeAssistant, ...override.homeAssistant },
     clipboard: { ...base.clipboard, ...override.clipboard },
+    xsOverlayRecovery: { ...base.xsOverlayRecovery, ...override.xsOverlayRecovery },
     updater: { ...base.updater, ...override.updater },
     control: { ...base.control, ...override.control },
     notifications: { ...base.notifications, ...override.notifications }

@@ -14,6 +14,20 @@ The clipboard workflow listens for text clipboard changes and rewrites social li
 - `instagram.com` post/reel/tv links -> `kkinstagram.com`
 - `pixiv.net` artwork links -> `phixiv.net`
 
+## XSOverlay Crash Recovery
+
+When SteamVR's `vrmonitor.exe` is running, the service watches for the primary `XSOverlay.exe`
+process. Recovery is armed only after XSOverlay has been observed running in the current SteamVR
+session. If it later disappears, the service confirms the absence and asks Steam to relaunch app
+`1173510`. It never launches XSOverlay after SteamVR has stopped or if XSOverlay was already absent
+when the service began observing the session.
+
+The default retry budget is five Steam launch attempts, with a 20-second launch grace period and
+increasing retry delays. A successful run must remain alive for 60 seconds before the retry budget
+is reset. Configure this under `xsOverlayRecovery` in `%APPDATA%\RaphiiWinUtils\config.json`.
+If Steam is installed somewhere other than the default location, set `xsOverlayRecovery.steamPath`
+to its `steam.exe` path.
+
 Runtime wiring is split by feature under `src/modules`, with feature-specific code under folders like `src/service`, `src/clipboard`, `src/audio`, and `src/matrix`.
 
 No secrets or machine-specific runtime config are stored in this repo. On first run the service creates:

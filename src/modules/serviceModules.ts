@@ -5,6 +5,7 @@ import { AudioModeService } from "../service/audioModeService.ts";
 import { ChannelVolumeService } from "../service/channelVolumeService.ts";
 import { ControlServer } from "../service/controlServer.ts";
 import { Updater } from "../service/updater.ts";
+import { XsOverlayRecoveryService } from "../service/xsOverlayRecoveryService.ts";
 import { Logger } from "../system/logger.ts";
 import type { Notifier } from "../system/notify.ts";
 import type { AppModule } from "./appModule.ts";
@@ -20,6 +21,11 @@ export function createServiceModules(
   const audioModeService = new AudioModeService(config, logger, audioModePublisher);
   const controlServer = new ControlServer(config.control, updater, audioModeService, logger);
   const clipboardAutomationService = new ClipboardAutomationService(config.clipboard, logger);
+  const xsOverlayRecoveryService = new XsOverlayRecoveryService(
+    config.xsOverlayRecovery,
+    notifier,
+    logger
+  );
 
   return [
     serviceModule("updater", updater),
@@ -31,7 +37,8 @@ export function createServiceModules(
         audioModeService.stop();
       }
     }),
-    serviceModule("clipboard-automations", clipboardAutomationService)
+    serviceModule("clipboard-automations", clipboardAutomationService),
+    serviceModule("xsoverlay-recovery", xsOverlayRecoveryService)
   ];
 }
 
