@@ -20,6 +20,7 @@ const order: Record<LogLevel, number> = {
 
 const maxLogAgeMs = 7 * 24 * 60 * 60 * 1000;
 const maxLogFileBytes = 10 * 1024 * 1024;
+let consoleErrorHandlersAttached = false;
 
 export class Logger {
   private readonly logDir: string;
@@ -27,6 +28,7 @@ export class Logger {
   private readonly minLevel: LogLevel;
 
   constructor(scope: string, minLevel: LogLevel = "info") {
+    attachConsoleErrorHandlers();
     this.scope = scope;
     this.minLevel = minLevel;
     const appData =
@@ -75,6 +77,16 @@ export class Logger {
     if (level === "error" || level === "warn") process.stderr.write(output);
     else process.stdout.write(output);
   }
+}
+
+function attachConsoleErrorHandlers(): void {
+  if (consoleErrorHandlersAttached) return;
+  consoleErrorHandlersAttached = true;
+
+  // The background task has no durable console. Writing a log line after its
+  // host closes the pipe must not terminate the service and take MQTT offline.
+  process.stdout.on("error", () => {});
+  process.stderr.on("error", () => {});
 }
 
 function appendBoundedLog(logDir: string, output: string): void {
