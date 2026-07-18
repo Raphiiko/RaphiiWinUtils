@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { HomeAssistantConfig } from "../config/schema.ts";
+import { defaultConfig, type HomeAssistantConfig } from "../config/schema.ts";
 import type { AudioModeSummary } from "../service/audioModeService.ts";
 import { HomeAssistantAudioModeWebhook } from "./audioModeWebhook.ts";
 
@@ -74,6 +74,7 @@ void test("rejects unsuccessful webhook responses", async () => {
 
 function config(override: Partial<HomeAssistantConfig> = {}): HomeAssistantConfig {
   return {
+    ...structuredClone(defaultConfig.homeAssistant),
     enabled: true,
     audioModeWebhookUrl: "http://homeassistant.local:8123/api/webhook/test",
     requestTimeoutMs: 3000,

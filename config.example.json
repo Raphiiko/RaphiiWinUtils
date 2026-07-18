@@ -110,6 +110,19 @@
   },
   "homeAssistant": {
     "enabled": false,
+    "url": "http://homeassistant.local:8123",
+    "accessToken": "",
+    "audioModeEntityId": "input_select.raphii_audio_mode",
+    "currentAudioModeEntityId": "input_text.raphii_audio_mode_current",
+    "volumeInitializationEntityId": "input_boolean.raphiiwinutils_volumes_initialized",
+    "volumeEntityIds": {
+      "System": "input_number.raphii_system_volume",
+      "Browser": "input_number.raphii_browser_volume",
+      "Voice": "input_number.raphii_voice_volume",
+      "Music": "input_number.raphii_music_volume",
+      "Game": "input_number.raphii_game_volume"
+    },
+    "syncIntervalMs": 5000,
     "audioModeWebhookUrl": "",
     "requestTimeoutMs": 3000
   },

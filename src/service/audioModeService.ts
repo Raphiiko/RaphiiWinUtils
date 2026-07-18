@@ -4,7 +4,7 @@ import {
   type AudioEndpointVolumeController
 } from "../audio/audioEndpointVolumeController.ts";
 import { buildAudioModeVolumePolicies } from "../audio/audioModeVolumePolicies.ts";
-import type { AudioModePublisher } from "../homeAssistant/audioModeWebhook.ts";
+import type { AudioModePublisher } from "../homeAssistant/audioModePublisher.ts";
 import { VbanTextClient } from "../matrix/vbanTextClient.ts";
 import { Logger } from "../system/logger.ts";
 
@@ -33,7 +33,7 @@ export interface AudioModeSummary {
 export class AudioModeService {
   private readonly log: Logger;
   private readonly config: AppConfig;
-  private readonly publisher: AudioModePublisher;
+  private publisher: AudioModePublisher;
   private readonly createMatrixClient: () => MatrixTextClient;
   private readonly delay: (ms: number) => Promise<void>;
   private readonly volumeController: AudioEndpointVolumeController;
@@ -69,6 +69,10 @@ export class AudioModeService {
     return this.config.audioModes.modes[id];
   }
 
+  setPublisher(publisher: AudioModePublisher): void {
+    this.publisher = publisher;
+  }
+
   async applyMode(id: string): Promise<AudioModeSummary> {
     const operation = this.applyModeTail.then(() => this.applyModeOnce(id));
     this.applyModeTail = operation.catch(() => undefined);
@@ -101,8 +105,6 @@ export class AudioModeService {
       micRoutes: mode.micRoutes
     };
     const volumePolicies = buildAudioModeVolumePolicies(this.config, mode);
-
-    void this.publishRequestedMode(id, summary);
 
     const beforeOutputVolumePromise = this.applyPreOutputVolumePolicies(
       id,
@@ -144,6 +146,9 @@ export class AudioModeService {
       routeAttempts: verification.attempts
     });
 
+    // State is published only after all local output, volume and mic-route checks succeeded.
+    void this.publishAppliedMode(id, summary);
+
     return summary;
   }
 
@@ -175,11 +180,11 @@ export class AudioModeService {
     ];
   }
 
-  private async publishRequestedMode(id: string, summary: AudioModeSummary): Promise<void> {
+  private async publishAppliedMode(id: string, summary: AudioModeSummary): Promise<void> {
     try {
       await this.publisher.publishMode(summary, this.listModes());
     } catch (error: unknown) {
-      this.log.warn("Could not publish requested audio mode to Home Assistant", {
+      this.log.warn("Could not publish applied audio mode to Home Assistant", {
         id,
         error: formatUnknownError(error)
       });

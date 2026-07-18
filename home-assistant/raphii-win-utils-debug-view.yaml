@@ -1,0 +1,36 @@
+# Add this view to the existing Debug dashboard's `views:` list.
+# `sensor.raphii_win_utils` is maintained by RaphiiWinUtils and has a fresh updated_at attribute
+# whenever the Windows app can reach Home Assistant.
+title: Raphii PC
+path: raphii-pc
+icon: mdi:desktop-tower-monitor
+cards:
+  - type: entities
+    title: RaphiiWinUtils audio
+    entities:
+      - entity: sensor.raphii_win_utils
+        name: Service
+      - entity: input_select.raphii_audio_mode
+        name: Requested mode
+      - entity: input_text.raphii_audio_mode_current
+        name: Last confirmed mode
+  - type: entities
+    title: Channel volumes
+    show_header_toggle: false
+    entities:
+      - input_number.raphii_system_volume
+      - input_number.raphii_browser_volume
+      - input_number.raphii_voice_volume
+      - input_number.raphii_game_volume
+      - input_number.raphii_music_volume
+  - type: markdown
+    title: Diagnostics
+    content: >-
+      {{ state_attr('sensor.raphii_win_utils', 'updated_at') and
+      'Last PC update: ' ~ state_attr('sensor.raphii_win_utils', 'updated_at') or
+      'The PC has not connected yet.' }}
+
+      Clipboard automation: {{ 'enabled' if state_attr('sensor.raphii_win_utils', 'features').clipboard_automation else 'disabled' }}
+      XSOverlay recovery: {{ 'enabled' if state_attr('sensor.raphii_win_utils', 'features').xsoverlay_recovery else 'disabled' }}
+      Self-updater: {{ 'enabled' if state_attr('sensor.raphii_win_utils', 'features').self_updater else 'disabled' }}
+      Local control API: {{ 'enabled' if state_attr('sensor.raphii_win_utils', 'features').local_control_api else 'disabled' }}

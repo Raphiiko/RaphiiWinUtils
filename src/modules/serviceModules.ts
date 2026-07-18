@@ -1,4 +1,6 @@
 import type { AppConfig } from "../config/schema.ts";
+import { CompositeAudioModePublisher } from "../homeAssistant/compositeAudioModePublisher.ts";
+import { HomeAssistantAudioSyncService } from "../homeAssistant/homeAssistantAudioSync.ts";
 import { HomeAssistantAudioModeWebhook } from "../homeAssistant/audioModeWebhook.ts";
 import { ClipboardAutomationService } from "../service/clipboardAutomationService.ts";
 import { AudioModeService } from "../service/audioModeService.ts";
@@ -17,9 +19,32 @@ export function createServiceModules(
 ): AppModule[] {
   const updater = new Updater(config.updater, notifier, logger);
   const channelVolumeService = new ChannelVolumeService(config, logger);
-  const audioModePublisher = new HomeAssistantAudioModeWebhook(config.homeAssistant);
-  const audioModeService = new AudioModeService(config, logger, audioModePublisher);
-  const controlServer = new ControlServer(config.control, updater, audioModeService, logger);
+  const legacyAudioModeWebhook = new HomeAssistantAudioModeWebhook(config.homeAssistant);
+  const audioModeService = new AudioModeService(config, logger, legacyAudioModeWebhook);
+  const homeAssistantAudioSync = new HomeAssistantAudioSyncService(
+    config.homeAssistant,
+    audioModeService,
+    channelVolumeService,
+    logger,
+    undefined,
+    undefined,
+    {
+      clipboardAutomationEnabled: config.clipboard.enabled,
+      xsOverlayRecoveryEnabled: config.xsOverlayRecovery.enabled,
+      updaterEnabled: config.updater.enabled,
+      localControlApiEnabled: config.control.enabled
+    }
+  );
+  audioModeService.setPublisher(
+    new CompositeAudioModePublisher([homeAssistantAudioSync, legacyAudioModeWebhook])
+  );
+  const controlServer = new ControlServer(
+    config.control,
+    updater,
+    audioModeService,
+    channelVolumeService,
+    logger
+  );
   const clipboardAutomationService = new ClipboardAutomationService(config.clipboard, logger);
   const xsOverlayRecoveryService = new XsOverlayRecoveryService(
     config.xsOverlayRecovery,
@@ -31,9 +56,13 @@ export function createServiceModules(
     serviceModule("updater", updater),
     serviceModule("channel-volume", channelVolumeService),
     serviceModule("audio-control", {
-      start: () => controlServer.start(),
+      start: () => {
+        controlServer.start();
+        homeAssistantAudioSync.start();
+      },
       stop: () => {
         controlServer.stop();
+        homeAssistantAudioSync.stop();
         audioModeService.stop();
       }
     }),

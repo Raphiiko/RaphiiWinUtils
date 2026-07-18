@@ -59,6 +59,19 @@ export interface AudioModeMicRoute {
 
 export interface HomeAssistantConfig {
   enabled: boolean;
+  /** Base URL of Home Assistant, without /api (for example http://homeassistant.local:8123). */
+  url: string;
+  /** A Home Assistant long-lived access token. Keep this only in the runtime config. */
+  accessToken: string;
+  /** The input_select whose selected option is the desired audio mode. */
+  audioModeEntityId: string;
+  /** The input_text used to retain the last successfully applied local mode. */
+  currentAudioModeEntityId: string;
+  /** An input_boolean used to safely bootstrap volume helpers from the PC's current values. */
+  volumeInitializationEntityId: string;
+  /** Maps configured channel names (System, Browser, etc.) to input_number helper entities. */
+  volumeEntityIds: Record<string, string>;
+  syncIntervalMs: number;
   audioModeWebhookUrl: string;
   requestTimeoutMs: number;
 }
@@ -191,6 +204,19 @@ export const defaultConfig: AppConfig = {
   },
   homeAssistant: {
     enabled: false,
+    url: "http://homeassistant.local:8123",
+    accessToken: "",
+    audioModeEntityId: "input_select.raphii_audio_mode",
+    currentAudioModeEntityId: "input_text.raphii_audio_mode_current",
+    volumeInitializationEntityId: "input_boolean.raphiiwinutils_volumes_initialized",
+    volumeEntityIds: {
+      System: "input_number.raphii_system_volume",
+      Browser: "input_number.raphii_browser_volume",
+      Voice: "input_number.raphii_voice_volume",
+      Music: "input_number.raphii_music_volume",
+      Game: "input_number.raphii_game_volume"
+    },
+    syncIntervalMs: 5000,
     audioModeWebhookUrl: "",
     requestTimeoutMs: 3000
   },

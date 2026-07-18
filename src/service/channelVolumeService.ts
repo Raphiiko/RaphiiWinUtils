@@ -2,6 +2,10 @@ import { Subscription, interval, tap } from "rxjs";
 import type { AppConfig } from "../config/schema.ts";
 import { AudioEndpointWatcher } from "../audio/audioEndpointWatcher.ts";
 import { mapEndpointsToChannels } from "../audio/channelMapper.ts";
+import {
+  WindowsAudioEndpointVolumeController,
+  type AudioEndpointVolumeController
+} from "../audio/audioEndpointVolumeController.ts";
 import type { ChannelState } from "../audio/types.ts";
 import { VbanTextClient } from "../matrix/vbanTextClient.ts";
 import { MatrixPresetSync } from "../matrix/matrixPresetSync.ts";
@@ -11,10 +15,20 @@ export class ChannelVolumeService {
   private readonly subscriptions = new Subscription();
   private readonly log: Logger;
   private readonly config: AppConfig;
+  private readonly volumeController: AudioEndpointVolumeController;
+  private readonly latestStates = new Map<string, ChannelState>();
+  private readonly listeners = new Set<(state: ChannelState) => void>();
 
-  constructor(config: AppConfig, logger: Logger) {
+  constructor(
+    config: AppConfig,
+    logger: Logger,
+    volumeController: AudioEndpointVolumeController = new WindowsAudioEndpointVolumeController(
+      logger
+    )
+  ) {
     this.config = config;
     this.log = logger.child("channel-volume");
+    this.volumeController = volumeController;
   }
 
   start(): void {
@@ -54,7 +68,9 @@ export class ChannelVolumeService {
       mapEndpointsToChannels(endpoints$, this.config.audio).subscribe({
         next: (state) => {
           latestChannelStates.set(state.presetPatch, state);
+          this.latestStates.set(state.channelName, state);
           matrixSync.sync(state);
+          for (const listener of this.listeners) listener(state);
         },
         error: (error) => {
           this.log.error("Channel volume service failed", { error: String(error) });
@@ -75,5 +91,49 @@ export class ChannelVolumeService {
 
   stop(): void {
     this.subscriptions.unsubscribe();
+    this.latestStates.clear();
+  }
+
+  listStates(): ChannelState[] {
+    return [...this.latestStates.values()].sort((a, b) => a.presetPatch - b.presetPatch);
+  }
+
+  configuredChannelNames(): string[] {
+    return this.config.audio.channels.map((channel) => channel.name);
+  }
+
+  onStateChange(listener: (state: ChannelState) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  async setVolume(channelName: string, volumePercent: number): Promise<void> {
+    const channel = this.config.audio.channels.find(
+      (candidate) => candidate.name.toLowerCase() === channelName.toLowerCase()
+    );
+    if (!channel) throw new UnknownAudioChannelError(channelName);
+    if (!Number.isInteger(volumePercent) || volumePercent < 0 || volumePercent > 100) {
+      throw new InvalidAudioVolumeError(volumePercent);
+    }
+
+    await this.volumeController.apply([
+      {
+        endpointNameContains: channel.endpointNameContains,
+        volumePercent,
+        mode: "set"
+      }
+    ]);
+  }
+}
+
+export class UnknownAudioChannelError extends Error {
+  constructor(channelName: string) {
+    super(`Unknown audio channel: ${channelName}`);
+  }
+}
+
+export class InvalidAudioVolumeError extends Error {
+  constructor(volumePercent: number) {
+    super(`Audio volume must be an integer from 0 to 100, received: ${volumePercent}`);
   }
 }

@@ -1,9 +1,8 @@
 import type { HomeAssistantConfig } from "../config/schema.ts";
 import type { AudioModeSummary } from "../service/audioModeService.ts";
+import type { AudioModePublisher } from "./audioModePublisher.ts";
 
-export interface AudioModePublisher {
-  publishMode(mode: AudioModeSummary, availableModes: AudioModeSummary[]): Promise<void>;
-}
+export type { AudioModePublisher } from "./audioModePublisher.ts";
 
 export class HomeAssistantAudioModeWebhook implements AudioModePublisher {
   private readonly config: HomeAssistantConfig;
@@ -16,9 +15,7 @@ export class HomeAssistantAudioModeWebhook implements AudioModePublisher {
 
   async publishMode(mode: AudioModeSummary, availableModes: AudioModeSummary[]): Promise<void> {
     if (!this.config.enabled) return;
-    if (!this.config.audioModeWebhookUrl.trim()) {
-      throw new Error("Home Assistant audio mode webhook URL is not configured");
-    }
+    if (!this.config.audioModeWebhookUrl.trim()) return;
 
     const response = await this.fetchImpl(this.config.audioModeWebhookUrl, {
       method: "POST",

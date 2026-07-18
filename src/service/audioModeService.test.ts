@@ -5,7 +5,7 @@ import type {
   AudioEndpointVolumeController,
   AudioEndpointVolumePolicy
 } from "../audio/audioEndpointVolumeController.ts";
-import type { AudioModePublisher } from "../homeAssistant/audioModeWebhook.ts";
+import type { AudioModePublisher } from "../homeAssistant/audioModePublisher.ts";
 import type { Logger } from "../system/logger.ts";
 import { AudioModeService } from "./audioModeService.ts";
 
@@ -75,7 +75,7 @@ void test("applies mode overrides only after the new output is selected", async 
   assert.deepEqual(events.slice(0, 3), ["cap", "output", "set"]);
 });
 
-void test("starts publishing the requested mode without delaying the Matrix output", async () => {
+void test("publishes only after the Matrix output and mic route are verified", async () => {
   const events: string[] = [];
   const matrix = new FakeMatrixClient("Desktop Speakers", false, true, (command) => {
     if (command.includes('.Device.WDM = "Nothing Ear"')) events.push("output");
@@ -83,15 +83,14 @@ void test("starts publishing the requested mode without delaying the Matrix outp
   const publisher = new DeferredPublisher(() => events.push("publish"));
   const service = createService(matrix, { publisher });
 
-  const applyPromise = service.applyMode("tws");
+  await service.applyMode("tws");
   for (let i = 0; i < 5; i += 1) {
     await Promise.resolve();
   }
 
-  assert.deepEqual(events.slice(0, 2), ["publish", "output"]);
+  assert.deepEqual(events.slice(0, 2), ["output", "publish"]);
   assert.equal(matrix.currentDeviceName, "Nothing Ear");
   publisher.resolve();
-  await applyPromise;
 });
 
 void test("switches the output while a slow pre-switch volume cap continues", async () => {

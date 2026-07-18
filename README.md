@@ -70,31 +70,68 @@ The app exposes a localhost-only Elysia API:
 ```text
 GET  http://127.0.0.1:17642/health
 POST http://127.0.0.1:17642/update/check
+GET  http://127.0.0.1:17642/audio/modes
+POST http://127.0.0.1:17642/audio/modes/:id
+GET  http://127.0.0.1:17642/audio/volumes
+POST http://127.0.0.1:17642/audio/volumes/:name
 ```
 
 The `POST /update/check` route queues one self-update check. If a check is already running it returns `409` and leaves the running check alone.
+The volume endpoint expects `{ "volumePercent": 0..100 }` and remains localhost-only.
 
-## Home Assistant Audio Mode Sync
+## Home Assistant Audio Control
 
-When an audio mode is requested, the app immediately publishes it to a Home Assistant webhook while
-the local Matrix output and microphone routing changes continue. Home Assistant remains responsible
-for device-specific behavior such as selecting the KEF optical input.
+Home Assistant can be the durable control plane for audio modes and the System, Browser, Voice,
+Game, and Music volumes. This works even when the PC or this app is unavailable: Home Assistant
+keeps requested values in helpers, and RaphiiWinUtils reconciles them as soon as both are back. The
+service only reports an audio mode as current after Matrix output, volume policies, and microphone
+routing have all verified successfully.
 
-Configure the generated webhook URL in `%APPDATA%\RaphiiWinUtils\config.json`:
+1. Add [raphii-win-utils-helpers.yaml](home-assistant/raphii-win-utils-helpers.yaml) to Home
+   Assistant (or copy its helpers to the UI). Update the `input_select` options if you change
+   `audioModes.modes`. Leave the `input_boolean.raphiiwinutils_volumes_initialized` helper off on
+   first install: the app will seed the volume helpers from the PC once all endpoints are available,
+   rather than applying Home Assistant's default `0` values to Windows.
+2. Create a Home Assistant long-lived access token and configure the generated
+   `%APPDATA%\RaphiiWinUtils\config.json`. Do not commit that token.
 
 ```json
 {
   "homeAssistant": {
     "enabled": true,
-    "audioModeWebhookUrl": "http://homeassistant.local:8123/api/webhook/replace-with-webhook-id",
+    "url": "http://homeassistant.local:8123",
+    "accessToken": "your-long-lived-token",
+    "audioModeEntityId": "input_select.raphii_audio_mode",
+    "currentAudioModeEntityId": "input_text.raphii_audio_mode_current",
+    "volumeInitializationEntityId": "input_boolean.raphiiwinutils_volumes_initialized",
+    "volumeEntityIds": {
+      "System": "input_number.raphii_system_volume",
+      "Browser": "input_number.raphii_browser_volume",
+      "Voice": "input_number.raphii_voice_volume",
+      "Music": "input_number.raphii_music_volume",
+      "Game": "input_number.raphii_game_volume"
+    },
+    "syncIntervalMs": 5000,
     "requestTimeoutMs": 3000
   }
 }
 ```
 
-Webhook failures are logged but do not make the local audio mode operation fail. Because publishing
-happens first, Home Assistant represents the requested mode even if the later local Matrix operation
-fails.
+The app calls Home Assistant rather than exposing its control API to the network. A dashboard change
+therefore survives PC and app restarts; temporary Home Assistant/network errors are logged and retried
+on the next sync. Local Stream Deck mode changes and local volume changes are also written back to
+the helpers. Local changes made while HA is unreachable are stored in a small on-PC outbox and are
+written to HA before it accepts older dashboard values after recovery. `sensor.raphii_win_utils` is
+refreshed while the app is connected and includes available modes plus live channel diagnostics.
+
+To add the PC tab to the existing Debug dashboard, append
+[raphii-win-utils-debug-view.yaml](home-assistant/raphii-win-utils-debug-view.yaml) as one item under
+that dashboard's `views:` list. It displays the requested and last-confirmed modes, all five volume
+controls, and the service's last update. The sensor becomes stale when the PC is off, which helps
+distinguish the persisted requested state from a confirmed current state.
+
+`audioModeWebhookUrl` remains available for existing automations. It is now sent only after the local
+audio mode has succeeded, so downstream device behavior cannot be triggered by a failed switch.
 
 ## Audio Mode Volume Policies
 
