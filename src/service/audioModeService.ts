@@ -1,7 +1,8 @@
 import type { AppConfig, AudioModeConfig, AudioModeMicRoute } from "../config/schema.ts";
 import {
   WindowsAudioEndpointVolumeController,
-  type AudioEndpointVolumeController
+  type AudioEndpointVolumeController,
+  type AudioEndpointVolumePolicy
 } from "../audio/audioEndpointVolumeController.ts";
 import { buildAudioModeVolumePolicies } from "../audio/audioModeVolumePolicies.ts";
 import type { AudioModePublisher } from "../mqtt/audioModePublisher.ts";
@@ -18,6 +19,9 @@ interface AudioModeServiceDependencies {
   createMatrixClient?: () => MatrixTextClient;
   delay?: (ms: number) => Promise<void>;
   volumeController?: AudioEndpointVolumeController;
+  filterPreOutputVolumePolicies?: (
+    policies: AudioEndpointVolumePolicy[]
+  ) => AudioEndpointVolumePolicy[];
 }
 
 const preSwitchVolumePolicyWaitMs = 1_000;
@@ -37,6 +41,9 @@ export class AudioModeService {
   private readonly createMatrixClient: () => MatrixTextClient;
   private readonly delay: (ms: number) => Promise<void>;
   private readonly volumeController: AudioEndpointVolumeController;
+  private readonly filterPreOutputVolumePolicies: (
+    policies: AudioEndpointVolumePolicy[]
+  ) => AudioEndpointVolumePolicy[];
   private applyModeTail: Promise<unknown> = Promise.resolve();
 
   constructor(
@@ -53,6 +60,8 @@ export class AudioModeService {
     this.delay = dependencies.delay ?? delay;
     this.volumeController =
       dependencies.volumeController ?? new WindowsAudioEndpointVolumeController(this.log);
+    this.filterPreOutputVolumePolicies =
+      dependencies.filterPreOutputVolumePolicies ?? ((policies) => policies);
   }
 
   listModes(): AudioModeSummary[] {
@@ -108,7 +117,7 @@ export class AudioModeService {
 
     const beforeOutputVolumePromise = this.applyPreOutputVolumePolicies(
       id,
-      volumePolicies.beforeOutputSwitch
+      this.filterPreOutputVolumePolicies(volumePolicies.beforeOutputSwitch)
     ).then(
       () => undefined,
       (error: unknown) => error

@@ -4,7 +4,8 @@ import { AudioEndpointWatcher } from "../audio/audioEndpointWatcher.ts";
 import { mapEndpointsToChannels } from "../audio/channelMapper.ts";
 import {
   WindowsAudioEndpointVolumeController,
-  type AudioEndpointVolumeController
+  type AudioEndpointVolumeController,
+  type AudioEndpointVolumePolicy
 } from "../audio/audioEndpointVolumeController.ts";
 import type { ChannelState } from "../audio/types.ts";
 import { VbanTextClient } from "../matrix/vbanTextClient.ts";
@@ -100,6 +101,25 @@ export class ChannelVolumeService {
 
   configuredChannelNames(): string[] {
     return this.config.audio.channels.map((channel) => channel.name);
+  }
+
+  /**
+   * Avoid launching the slow one-shot Windows policy helper when the persistent
+   * watcher already has a fresh reading proving a policy is a no-op. Unknown
+   * endpoints remain in the result so the mode switch stays conservative.
+   */
+  policiesThatNeedApply(policies: AudioEndpointVolumePolicy[]): AudioEndpointVolumePolicy[] {
+    return policies.filter((policy) => {
+      const state = this.listStates().find((candidate) =>
+        candidate.endpoint.name.toLowerCase().includes(policy.endpointNameContains.toLowerCase())
+      );
+      if (!state) return true;
+
+      const currentPercent = state.endpoint.volumePercent;
+      return policy.mode === "cap"
+        ? currentPercent > policy.volumePercent
+        : currentPercent !== policy.volumePercent;
+    });
   }
 
   onStateChange(listener: (state: ChannelState) => void): () => void {
