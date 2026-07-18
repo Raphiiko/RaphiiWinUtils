@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { migrateAudioModeOverrides } from "./audioModeIds.ts";
 import { defaultConfig, type AppConfig } from "./schema.ts";
 
 export function getConfigPath(): string {
@@ -21,6 +22,7 @@ export async function loadConfig(): Promise<AppConfig> {
 }
 
 function mergeConfig(base: AppConfig, override: Partial<AppConfig>): AppConfig {
+  const modeOverrides = migrateAudioModeOverrides(override.audioModes?.modes);
   return {
     matrix: { ...base.matrix, ...override.matrix },
     audio: {
@@ -33,7 +35,7 @@ function mergeConfig(base: AppConfig, override: Partial<AppConfig>): AppConfig {
       ...override.audioModes,
       modes: {
         ...base.audioModes.modes,
-        ...override.audioModes?.modes
+        ...modeOverrides
       }
     },
     mqtt: { ...base.mqtt, ...override.mqtt },

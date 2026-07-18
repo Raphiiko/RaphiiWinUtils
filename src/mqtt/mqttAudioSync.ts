@@ -1,4 +1,5 @@
 import { connect, type IClientOptions, type IPublishPacket, type MqttClient } from "mqtt";
+import { migrateAudioModeId } from "../config/audioModeIds.ts";
 import type { MqttConfig } from "../config/schema.ts";
 import type { AudioModeSummary } from "../service/audioModeService.ts";
 import type { ChannelVolumeService } from "../service/channelVolumeService.ts";
@@ -110,6 +111,11 @@ export class MqttAudioSyncService implements AudioModePublisher {
   private async loadStateAndConnect(): Promise<void> {
     try {
       this.state = await this.stateStore.load();
+      const migratedMode = this.state.mode && migrateAudioModeId(this.state.mode);
+      if (migratedMode && migratedMode !== this.state.mode) {
+        this.state.mode = migratedMode;
+        await this.persistState();
+      }
     } catch (error) {
       this.log.warn("Could not load saved MQTT audio state", { error: formatError(error) });
     }

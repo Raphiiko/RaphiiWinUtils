@@ -8,13 +8,22 @@ import type { Logger } from "../system/logger.ts";
 import type { AudioMqttState, AudioMqttStateStore } from "./audioMqttStateStore.ts";
 import { MqttAudioSyncService } from "./mqttAudioSync.ts";
 
-const speaker: AudioModeSummary = {
-  id: "speaker",
-  name: "Speaker",
+const deskSpeakers: AudioModeSummary = {
+  id: "desk-speakers",
+  name: "Desk Speakers",
   outputDeviceName: "Desktop Speakers",
   micInputSlot: "WIN1.IN",
   micRoutes: []
 };
+
+const allAudioModes = [
+  { id: "headset-desk-mic", name: "Headset + Desk Mic" },
+  { id: "beyond", name: "Beyond" },
+  { id: "headset", name: "Headset" },
+  { id: "iems", name: "IEMs" },
+  { id: "desk-speakers", name: "Desk Speakers" },
+  { id: "tws", name: "TWS" }
+].map(({ id, name }) => ({ ...deskSpeakers, id, name }));
 
 const logger = {
   child() {
@@ -32,10 +41,10 @@ void test("publishes discovery and only confirms an MQTT mode after the local co
   const service = new MqttAudioSyncService(
     { ...defaultConfig.mqtt, enabled: true, password: "test-password" },
     {
-      listModes: () => [speaker],
+      listModes: () => allAudioModes,
       applyMode: (id) => {
         modesApplied.push(id);
-        return Promise.resolve(speaker);
+        return Promise.resolve(deskSpeakers);
       }
     },
     createChannels() as unknown as ChannelVolumeService,
@@ -49,27 +58,38 @@ void test("publishes discovery and only confirms an MQTT mode after the local co
   await waitFor(() =>
     client.published.some((message) => message.topic.endsWith("audio_mode/config"))
   );
+  const discovery = JSON.parse(
+    client.published.find((message) => message.topic.endsWith("audio_mode/config"))?.payload ?? "{}"
+  ) as { options?: string[] };
+  assert.deepEqual(discovery.options, [
+    "headset-desk-mic",
+    "beyond",
+    "headset",
+    "iems",
+    "desk-speakers",
+    "tws"
+  ]);
 
   assert.equal(
     client.published.some(
       (message) =>
         message.topic === "raphiiwinutils/shirakami/audio/mode/state" &&
-        message.payload === "speaker"
+        message.payload === "desk-speakers"
     ),
     false
   );
 
-  client.emit("message", "raphiiwinutils/shirakami/audio/mode/set", Buffer.from("speaker"));
+  client.emit("message", "raphiiwinutils/shirakami/audio/mode/set", Buffer.from("desk-speakers"));
   await waitFor(() => modesApplied.length === 1);
   await waitFor(() =>
     client.published.some(
       (message) =>
         message.topic === "raphiiwinutils/shirakami/audio/mode/state" &&
-        message.payload === "speaker"
+        message.payload === "desk-speakers"
     )
   );
 
-  assert.deepEqual(modesApplied, ["speaker"]);
+  assert.deepEqual(modesApplied, ["desk-speakers"]);
   assert.equal(
     client.published.find((message) => message.topic.endsWith("audio_mode/config"))?.retain,
     true
@@ -83,7 +103,7 @@ void test("publishes VRChat buttons and routes their presses to the recovery ser
   let startCalls = 0;
   const service = new MqttAudioSyncService(
     { ...defaultConfig.mqtt, enabled: true, password: "test-password" },
-    { listModes: () => [speaker], applyMode: () => Promise.resolve(speaker) },
+    { listModes: () => [deskSpeakers], applyMode: () => Promise.resolve(deskSpeakers) },
     createChannels() as unknown as ChannelVolumeService,
     logger,
     { connect: () => client as unknown as MqttClient, stateStore: new MemoryStateStore() },
@@ -136,12 +156,9 @@ void test("publishes VRChat buttons and routes their presses to the recovery ser
     Buffer.from("PRESS"),
     { retain: false }
   );
-  client.emit(
-    "message",
-    "raphiiwinutils/shirakami/vrchat/start/set",
-    Buffer.from("PRESS"),
-    { retain: false }
-  );
+  client.emit("message", "raphiiwinutils/shirakami/vrchat/start/set", Buffer.from("PRESS"), {
+    retain: false
+  });
   await waitFor(() => recoverCalls === 1 && startCalls === 1);
   service.stop();
 });
@@ -151,7 +168,7 @@ void test("does not replay retained MQTT VRChat button presses", async () => {
   let recoverCalls = 0;
   const service = new MqttAudioSyncService(
     { ...defaultConfig.mqtt, enabled: true, password: "test-password" },
-    { listModes: () => [speaker], applyMode: () => Promise.resolve(speaker) },
+    { listModes: () => [deskSpeakers], applyMode: () => Promise.resolve(deskSpeakers) },
     createChannels() as unknown as ChannelVolumeService,
     logger,
     { connect: () => client as unknown as MqttClient, stateStore: new MemoryStateStore() },
