@@ -39,6 +39,7 @@ function mergeConfig(base: AppConfig, override: Partial<AppConfig>): AppConfig {
     mqtt: { ...base.mqtt, ...override.mqtt },
     clipboard: { ...base.clipboard, ...override.clipboard },
     xsOverlayRecovery: { ...base.xsOverlayRecovery, ...override.xsOverlayRecovery },
+    vrChatRecovery: { ...base.vrChatRecovery, ...override.vrChatRecovery },
     updater: { ...base.updater, ...override.updater },
     control: { ...base.control, ...override.control },
     notifications: { ...base.notifications, ...override.notifications }

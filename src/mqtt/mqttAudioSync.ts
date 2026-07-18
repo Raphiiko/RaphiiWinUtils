@@ -5,6 +5,7 @@ import type { ChannelVolumeService } from "../service/channelVolumeService.ts";
 import type { ChannelState } from "../audio/types.ts";
 import type { Logger } from "../system/logger.ts";
 import type { AudioModePublisher } from "./audioModePublisher.ts";
+import type { VrChatRecoveryRequestResult } from "../service/vrChatRecoveryService.ts";
 import {
   FileAudioMqttStateStore,
   type AudioMqttState,
@@ -21,6 +22,23 @@ export interface MqttAudioSyncDependencies {
   stateStore?: AudioMqttStateStore;
 }
 
+const vrChatButtons = [
+  {
+    action: "recover-last-instance",
+    commandTopicSuffix: "vrchat/recover-last-instance/set",
+    entityId: "recover_vrchat",
+    name: "Recover VRChat"
+  },
+  {
+    action: "start",
+    commandTopicSuffix: "vrchat/start/set",
+    entityId: "start_vrchat",
+    name: "Start VRChat"
+  }
+] as const;
+
+type VrChatAction = (typeof vrChatButtons)[number]["action"];
+
 /**
  * Bridges confirmed Windows audio state and Home Assistant MQTT discovery.
  * Commands and state use different retained topics: a command only becomes state
@@ -34,6 +52,7 @@ export class MqttAudioSyncService implements AudioModePublisher {
   private readonly config: MqttConfig;
   private readonly audioModes: AudioModeController;
   private readonly channels: ChannelVolumeService;
+  private readonly vrChatRecovery?: VrChatRecoveryController;
   private client?: MqttClient;
   private state: AudioMqttState = { channelVolumes: {} };
   private stateReady?: Promise<void>;
@@ -46,12 +65,14 @@ export class MqttAudioSyncService implements AudioModePublisher {
     audioModes: AudioModeController,
     channels: ChannelVolumeService,
     logger: Logger,
-    dependencies: MqttAudioSyncDependencies = {}
+    dependencies: MqttAudioSyncDependencies = {},
+    vrChatRecovery?: VrChatRecoveryController
   ) {
     this.log = logger.child("mqtt-audio");
     this.config = config;
     this.audioModes = audioModes;
     this.channels = channels;
+    this.vrChatRecovery = vrChatRecovery;
     this.stateStore = dependencies.stateStore ?? new FileAudioMqttStateStore();
     this.createClient = dependencies.connect ?? connect;
     this.topicRoot = config.baseTopic.replace(/^\/+|\/+$/g, "");
@@ -121,6 +142,9 @@ export class MqttAudioSyncService implements AudioModePublisher {
     this.log.info("Connected to MQTT broker", { host: this.config.host, port: this.config.port });
     await this.subscribe(this.topic("audio/mode/set"));
     await Promise.all(
+      vrChatButtons.map((button) => this.subscribe(this.topic(button.commandTopicSuffix)))
+    );
+    await Promise.all(
       this.channels
         .configuredChannelNames()
         .map((channel) => this.subscribe(this.topic(`audio/volume/${channelSlug(channel)}/set`)))
@@ -152,6 +176,14 @@ export class MqttAudioSyncService implements AudioModePublisher {
       } catch (error) {
         this.log.error("Could not apply MQTT audio mode", { modeId, error: formatError(error) });
       }
+      return;
+    }
+    const vrChatButton = vrChatButtons.find(
+      (button) => topic === this.topic(button.commandTopicSuffix)
+    );
+    if (vrChatButton) {
+      if (payload !== "PRESS") return;
+      await this.runVrChatAction(vrChatButton.action);
       return;
     }
     const channel = this.channels
@@ -236,6 +268,7 @@ export class MqttAudioSyncService implements AudioModePublisher {
       }),
       true
     );
+    await this.publishVrChatButtonDiscovery(prefix, deviceId, availability, device);
     await Promise.all(
       this.channels.configuredChannelNames().map((channel) =>
         this.publish(
@@ -260,6 +293,52 @@ export class MqttAudioSyncService implements AudioModePublisher {
         )
       )
     );
+  }
+
+  private async publishVrChatButtonDiscovery(
+    prefix: string,
+    deviceId: string,
+    availability: { topic: string; payload_available: string; payload_not_available: string },
+    device: { identifiers: string[]; name: string; manufacturer: string; model: string }
+  ): Promise<void> {
+    await Promise.all(
+      vrChatButtons.map((button) =>
+        this.publish(
+          `${prefix}/button/${deviceId}/${button.entityId}/config`,
+          JSON.stringify({
+            name: button.name,
+            unique_id: `${deviceId}_${button.entityId}`,
+            object_id: `shirakami_${button.entityId}`,
+            command_topic: this.topic(button.commandTopicSuffix),
+            payload_press: "PRESS",
+            retain: true,
+            qos: 1,
+            availability,
+            device
+          }),
+          true
+        )
+      )
+    );
+  }
+
+  private async runVrChatAction(action: VrChatAction): Promise<void> {
+    if (!this.vrChatRecovery) {
+      this.log.warn("Ignoring MQTT VRChat action because recovery is unavailable", { action });
+      return;
+    }
+    const result =
+      action === "recover-last-instance"
+        ? await this.vrChatRecovery.recoverLastInstance()
+        : await this.vrChatRecovery.startVrChat();
+    if (!result.accepted) {
+      this.log.warn(
+        "Ignoring MQTT VRChat action because another action is running or recovery is disabled",
+        {
+          action
+        }
+      );
+    }
   }
 
   private async subscribe(topic: string): Promise<void> {
@@ -303,6 +382,11 @@ export class MqttAudioSyncService implements AudioModePublisher {
   private topic(suffix: string): string {
     return `${this.topicRoot}/${suffix}`;
   }
+}
+
+interface VrChatRecoveryController {
+  recoverLastInstance(): Promise<VrChatRecoveryRequestResult>;
+  startVrChat(): Promise<VrChatRecoveryRequestResult>;
 }
 
 function channelSlug(channel: string): string {

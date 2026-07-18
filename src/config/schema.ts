@@ -5,6 +5,7 @@ export interface AppConfig {
   mqtt: MqttConfig;
   clipboard: ClipboardAutomationConfig;
   xsOverlayRecovery: XsOverlayRecoveryConfig;
+  vrChatRecovery: VrChatRecoveryConfig;
   updater: UpdaterConfig;
   control: ControlConfig;
   notifications: NotificationConfig;
@@ -86,6 +87,16 @@ export interface XsOverlayRecoveryConfig {
   healthyResetMs: number;
   steamPath: string;
   steamAppId: string;
+}
+
+export interface VrChatRecoveryConfig {
+  enabled: boolean;
+  steamPath: string;
+  steamVrAppId: string;
+  vrChatAppId: string;
+  vrChatExitWaitMs: number;
+  steamVrExitWaitMs: number;
+  steamVrStartWaitMs: number;
 }
 
 export interface UpdaterConfig {
@@ -222,6 +233,15 @@ export const defaultConfig: AppConfig = {
     healthyResetMs: 60000,
     steamPath: "C:\\Program Files (x86)\\Steam\\steam.exe",
     steamAppId: "1173510"
+  },
+  vrChatRecovery: {
+    enabled: true,
+    steamPath: "C:\\Program Files (x86)\\Steam\\steam.exe",
+    steamVrAppId: "250820",
+    vrChatAppId: "438100",
+    vrChatExitWaitMs: 3000,
+    steamVrExitWaitMs: 5000,
+    steamVrStartWaitMs: 5000
   },
   updater: {
     enabled: true,

@@ -27,6 +27,26 @@ export async function getRunningProcessNames(processNames: string[]): Promise<Se
   );
 }
 
+export async function stopProcesses(processNames: string[]): Promise<void> {
+  if (processNames.length === 0) return;
+
+  const names = processNames.map(toPowerShellString).join(", ");
+  const result = await runCommand(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `Stop-Process -Name @(${names}) -Force -ErrorAction SilentlyContinue`
+    ],
+    { timeoutMs: 10_000 }
+  );
+
+  if (result.code !== 0) {
+    throw new Error(`Windows process stop failed: ${result.stderr.trim() || result.code}`);
+  }
+}
+
 function toPowerShellString(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
