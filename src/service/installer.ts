@@ -34,6 +34,7 @@ export async function installLocal(config: AppConfig, logger: Logger): Promise<v
   });
 
   log.info("Deploying build", { installDir });
+  stopRunningInstallation(installDir, log);
   copyBuildArtifacts(join(process.cwd(), "dist"), installDir);
   await writeDeployedRevision(installDir, log);
 
@@ -57,11 +58,35 @@ export async function installLocal(config: AppConfig, logger: Logger): Promise<v
   }
 
   registerWindowsIntegration(installDir, config.notifications.appName);
+  startLogonTask(config.notifications.appName, log);
   await installPushUpdateHook(config, log);
   log.info("Install complete", {
     node: nodePath,
     entrypoint: join(installDir, "app", "src", "main.ts")
   });
+}
+
+function stopRunningInstallation(installDir: string, log: Logger): void {
+  const entrypoint = join(installDir, "app", "src", "main.ts");
+  const helperDirectory = join(installDir, "helpers");
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    `$entrypoint = '${ps(entrypoint)}'`,
+    `$helperDirectory = '${ps(helperDirectory)}'`,
+    "$processes = Get-CimInstance Win32_Process | Where-Object { ($_.CommandLine -and $_.CommandLine -like ('*' + $entrypoint + '*')) -or ($_.ExecutablePath -and $_.ExecutablePath -like ($helperDirectory + '*')) }",
+    "$processes | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+    "if ($processes) { Start-Sleep -Milliseconds 500 }"
+  ].join("; ");
+
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-Command", script], {
+    windowsHide: true,
+    encoding: "utf8"
+  });
+  if (result.status !== 0) {
+    log.warn("Could not stop the previous local installation before deployment", {
+      error: result.stderr.trim()
+    });
+  }
 }
 
 export function copyBuildArtifacts(fromDir: string, installDir: string): void {
@@ -151,6 +176,20 @@ function registerLogonTask(installDir: string, appName: string, launcherPath: st
   );
   if (taskResult.status !== 0) {
     throw new Error(`Failed to register logon task: ${taskResult.stderr}`);
+  }
+}
+
+function startLogonTask(appName: string, log: Logger): void {
+  const result = spawnSync(
+    "powershell.exe",
+    ["-NoProfile", "-Command", `Start-ScheduledTask -TaskName '${ps(appName)}'`],
+    {
+      windowsHide: true,
+      encoding: "utf8"
+    }
+  );
+  if (result.status !== 0) {
+    log.warn("Could not start the installed service", { error: result.stderr.trim() });
   }
 }
 
