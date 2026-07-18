@@ -181,7 +181,9 @@ export function buildLogonTaskRegistrationScript(
     "$user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name",
     '$action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ("//B //Nologo `"" + $launcherPath + "`"") -WorkingDirectory $installDir',
     "$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user",
-    "$watchdogTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration ([TimeSpan]::MaxValue)",
+    "$watchdogTrigger = New-ScheduledTaskTrigger -Daily -At '00:00'",
+    "$watchdogRepetition = New-ScheduledTaskTrigger -Once -At '00:00' -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 1)",
+    "$watchdogTrigger.Repetition = $watchdogRepetition.Repetition",
     "$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited",
     "$settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)",
     `Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($trigger, $watchdogTrigger) -Principal $principal -Settings $settings -Description "${ps(appName)} background service" -Force | Out-Null`
