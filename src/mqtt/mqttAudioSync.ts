@@ -37,6 +37,7 @@ export class MqttAudioSyncService implements AudioModePublisher {
   private client?: MqttClient;
   private state: AudioMqttState = { channelVolumes: {} };
   private stateReady?: Promise<void>;
+  private stateSaveTail: Promise<void> = Promise.resolve();
   private removeChannelListener?: () => void;
   private stopped = false;
 
@@ -284,11 +285,12 @@ export class MqttAudioSyncService implements AudioModePublisher {
   }
 
   private async persistState(): Promise<void> {
-    try {
-      await this.stateStore.save(this.state);
-    } catch (error) {
+    const stateSnapshot = structuredClone(this.state);
+    const write = this.stateSaveTail.then(() => this.stateStore.save(stateSnapshot));
+    this.stateSaveTail = write.catch((error) => {
       this.log.warn("Could not save MQTT audio state", { error: formatError(error) });
-    }
+    });
+    await this.stateSaveTail;
   }
 
   private isConfigured(): boolean {
