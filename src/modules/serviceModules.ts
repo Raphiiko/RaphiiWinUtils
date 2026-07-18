@@ -17,7 +17,15 @@ export function createServiceModules(
 ): AppModule[] {
   const updater = new Updater(config.updater, notifier, logger);
   const channelVolumeService = new ChannelVolumeService(config, logger);
-  const audioModeService = new AudioModeService(config, logger, { publishMode: async () => {} });
+  const audioModeService = new AudioModeService(
+    config,
+    logger,
+    { publishMode: async () => {} },
+    {
+      filterPreOutputVolumePolicies: (policies) =>
+        channelVolumeService.policiesThatNeedApply(policies)
+    }
+  );
   const mqttAudioSync = new MqttAudioSyncService(
     config.mqtt,
     audioModeService,

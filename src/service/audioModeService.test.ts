@@ -110,12 +110,28 @@ void test("switches the output while a slow pre-switch volume cap continues", as
   await applyPromise;
 });
 
+void test("skips a pre-switch volume helper call when the endpoint watcher confirms every cap is a no-op", async () => {
+  const matrix = new FakeMatrixClient("Desktop Speakers");
+  const volumeController = new FakeVolumeController();
+  const service = createService(matrix, {
+    volumeController,
+    filterPreOutputVolumePolicies: () => []
+  });
+
+  await service.applyMode("tws");
+
+  assert.deepEqual(volumeController.batches, [[], []]);
+});
+
 function createService(
   matrix: FakeMatrixClient,
   options: {
     channelVolumeOverrides?: Record<string, number>;
     volumeController?: AudioEndpointVolumeController;
     publisher?: AudioModePublisher;
+    filterPreOutputVolumePolicies?: (
+      policies: AudioEndpointVolumePolicy[]
+    ) => AudioEndpointVolumePolicy[];
   } = {}
 ): AudioModeService {
   const config = structuredClone(defaultConfig);
@@ -137,7 +153,8 @@ function createService(
   return new AudioModeService(config, logger, options.publisher ?? publisher, {
     createMatrixClient: () => matrix,
     delay: () => Promise.resolve(),
-    volumeController: options.volumeController ?? new FakeVolumeController()
+    volumeController: options.volumeController ?? new FakeVolumeController(),
+    filterPreOutputVolumePolicies: options.filterPreOutputVolumePolicies
   });
 }
 
