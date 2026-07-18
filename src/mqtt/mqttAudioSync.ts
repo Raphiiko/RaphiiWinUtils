@@ -1,4 +1,4 @@
-import { connect, type IClientOptions, type MqttClient } from "mqtt";
+import { connect, type IClientOptions, type IPublishPacket, type MqttClient } from "mqtt";
 import type { MqttConfig } from "../config/schema.ts";
 import type { AudioModeSummary } from "../service/audioModeService.ts";
 import type { ChannelVolumeService } from "../service/channelVolumeService.ts";
@@ -129,8 +129,8 @@ export class MqttAudioSyncService implements AudioModePublisher {
     this.client.on("connect", () => {
       void this.onConnected();
     });
-    this.client.on("message", (topic, payload) => {
-      void this.onMessage(topic, payload.toString());
+    this.client.on("message", (topic, payload, packet) => {
+      void this.onMessage(topic, payload.toString(), packet);
     });
     this.client.on("error", (error) => {
       this.log.warn("MQTT broker connection error", { error: error.message });
@@ -155,7 +155,11 @@ export class MqttAudioSyncService implements AudioModePublisher {
     await this.publishAllState();
   }
 
-  private async onMessage(topic: string, payload: string): Promise<void> {
+  private async onMessage(
+    topic: string,
+    payload: string,
+    packet: Pick<IPublishPacket, "retain">
+  ): Promise<void> {
     if (topic === `${this.config.discoveryPrefix}/status`) {
       if (payload === "online") {
         await this.publishDiscovery();
@@ -182,6 +186,12 @@ export class MqttAudioSyncService implements AudioModePublisher {
       (button) => topic === this.topic(button.commandTopicSuffix)
     );
     if (vrChatButton) {
+      // MQTT brokers replay retained messages to every new subscriber. A button
+      // press is an event, not state, so replaying it must never start VRChat.
+      if (packet.retain) {
+        this.log.warn("Ignoring retained MQTT VRChat action", { action: vrChatButton.action });
+        return;
+      }
       if (payload !== "PRESS") return;
       await this.runVrChatAction(vrChatButton.action);
       return;
