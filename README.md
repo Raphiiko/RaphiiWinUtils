@@ -83,55 +83,38 @@ The volume endpoint expects `{ "volumePercent": 0..100 }` and remains localhost-
 
 Home Assistant can be the durable control plane for audio modes and the System, Browser, Voice,
 Game, and Music volumes. This works even when the PC or this app is unavailable: Home Assistant
-keeps requested values in helpers, and RaphiiWinUtils reconciles them as soon as both are back. The
-service only reports an audio mode as current after Matrix output, volume policies, and microphone
-routing have all verified successfully.
+uses MQTT discovery. Home Assistant receives native controls without a long-lived Home Assistant
+token, while the PC remains the authority for its actual Windows audio state. The service only
+reports an audio mode as current after Matrix output, volume policies, and microphone routing have
+all verified successfully.
 
-1. Add [raphii-win-utils-helpers.yaml](home-assistant/raphii-win-utils-helpers.yaml) to Home
-   Assistant (or copy its helpers to the UI). Update the `input_select` options if you change
-   `audioModes.modes`. Leave the `input_boolean.raphiiwinutils_volumes_initialized` helper off on
-   first install: the app will seed the volume helpers from the PC once all endpoints are available,
-   rather than applying Home Assistant's default `0` values to Windows.
-2. Create a Home Assistant long-lived access token and configure the generated
-   `%APPDATA%\RaphiiWinUtils\config.json`. Do not commit that token.
+1. Create a dedicated Mosquitto username/password for this PC.
+2. Configure the generated `%APPDATA%\RaphiiWinUtils\config.json`. Do not commit the password.
 
 ```json
 {
-  "homeAssistant": {
+  "mqtt": {
     "enabled": true,
-    "url": "http://homeassistant.local:8123",
-    "accessToken": "your-long-lived-token",
-    "audioModeEntityId": "input_select.raphii_audio_mode",
-    "currentAudioModeEntityId": "input_text.raphii_audio_mode_current",
-    "volumeInitializationEntityId": "input_boolean.raphiiwinutils_volumes_initialized",
-    "volumeEntityIds": {
-      "System": "input_number.raphii_system_volume",
-      "Browser": "input_number.raphii_browser_volume",
-      "Voice": "input_number.raphii_voice_volume",
-      "Music": "input_number.raphii_music_volume",
-      "Game": "input_number.raphii_game_volume"
-    },
-    "syncIntervalMs": 5000,
-    "requestTimeoutMs": 3000
+    "host": "homeassistant.local",
+    "port": 1883,
+    "username": "shirakami",
+    "password": "your-broker-password",
+    "clientId": "raphii-win-utils-shirakami",
+    "baseTopic": "raphiiwinutils/shirakami",
+    "discoveryPrefix": "homeassistant",
+    "reconnectDelayMs": 5000
   }
 }
 ```
 
-The app calls Home Assistant rather than exposing its control API to the network. A dashboard change
-therefore survives PC and app restarts; temporary Home Assistant/network errors are logged and retried
-on the next sync. Local Stream Deck mode changes and local volume changes are also written back to
-the helpers. Local changes made while HA is unreachable are stored in a small on-PC outbox and are
-written to HA before it accepts older dashboard values after recovery. `sensor.raphii_win_utils` is
-refreshed while the app is connected and includes available modes plus live channel diagnostics.
+The app does not expose its control API to the network. MQTT command topics are retained by Home
+Assistant, while confirmed mode and volume states are retained by the broker and also saved locally
+on the PC. The client reconnects automatically after either side restarts, republishes discovery and
+the latest known state, and reapplies a retained command when it reconnects. Local Stream Deck changes
+and direct Windows virtual-device volume changes are published back to the same Home Assistant controls.
 
-To add the PC tab to the existing Debug dashboard, append
-[raphii-win-utils-debug-view.yaml](home-assistant/raphii-win-utils-debug-view.yaml) as one item under
-that dashboard's `views:` list. It displays the requested and last-confirmed modes, all five volume
-controls, and the service's last update. The sensor becomes stale when the PC is off, which helps
-distinguish the persisted requested state from a confirmed current state.
-
-`audioModeWebhookUrl` remains available for existing automations. It is now sent only after the local
-audio mode has succeeded, so downstream device behavior cannot be triggered by a failed switch.
+The MQTT-discovered **Shirakami** device contains the audio-mode select, five volume sliders, and
+availability status. Add those entities to any dashboard; no YAML helpers or REST token are needed.
 
 ## Audio Mode Volume Policies
 

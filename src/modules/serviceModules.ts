@@ -1,7 +1,5 @@
 import type { AppConfig } from "../config/schema.ts";
-import { CompositeAudioModePublisher } from "../homeAssistant/compositeAudioModePublisher.ts";
-import { HomeAssistantAudioSyncService } from "../homeAssistant/homeAssistantAudioSync.ts";
-import { HomeAssistantAudioModeWebhook } from "../homeAssistant/audioModeWebhook.ts";
+import { MqttAudioSyncService } from "../mqtt/mqttAudioSync.ts";
 import { ClipboardAutomationService } from "../service/clipboardAutomationService.ts";
 import { AudioModeService } from "../service/audioModeService.ts";
 import { ChannelVolumeService } from "../service/channelVolumeService.ts";
@@ -19,25 +17,14 @@ export function createServiceModules(
 ): AppModule[] {
   const updater = new Updater(config.updater, notifier, logger);
   const channelVolumeService = new ChannelVolumeService(config, logger);
-  const legacyAudioModeWebhook = new HomeAssistantAudioModeWebhook(config.homeAssistant);
-  const audioModeService = new AudioModeService(config, logger, legacyAudioModeWebhook);
-  const homeAssistantAudioSync = new HomeAssistantAudioSyncService(
-    config.homeAssistant,
+  const audioModeService = new AudioModeService(config, logger, { publishMode: async () => {} });
+  const mqttAudioSync = new MqttAudioSyncService(
+    config.mqtt,
     audioModeService,
     channelVolumeService,
-    logger,
-    undefined,
-    undefined,
-    {
-      clipboardAutomationEnabled: config.clipboard.enabled,
-      xsOverlayRecoveryEnabled: config.xsOverlayRecovery.enabled,
-      updaterEnabled: config.updater.enabled,
-      localControlApiEnabled: config.control.enabled
-    }
+    logger
   );
-  audioModeService.setPublisher(
-    new CompositeAudioModePublisher([homeAssistantAudioSync, legacyAudioModeWebhook])
-  );
+  audioModeService.setPublisher(mqttAudioSync);
   const controlServer = new ControlServer(
     config.control,
     updater,
@@ -58,11 +45,11 @@ export function createServiceModules(
     serviceModule("audio-control", {
       start: () => {
         controlServer.start();
-        homeAssistantAudioSync.start();
+        mqttAudioSync.start();
       },
       stop: () => {
         controlServer.stop();
-        homeAssistantAudioSync.stop();
+        mqttAudioSync.stop();
         audioModeService.stop();
       }
     }),

@@ -5,7 +5,7 @@ import type {
   AudioEndpointVolumeController,
   AudioEndpointVolumePolicy
 } from "../audio/audioEndpointVolumeController.ts";
-import type { AudioModePublisher } from "../homeAssistant/audioModePublisher.ts";
+import type { AudioModePublisher } from "../mqtt/audioModePublisher.ts";
 import type { Logger } from "../system/logger.ts";
 import { AudioModeService } from "./audioModeService.ts";
 

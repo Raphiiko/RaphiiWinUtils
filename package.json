@@ -27,6 +27,7 @@
   "dependencies": {
     "@elysiajs/node": "^1.4.5",
     "elysia": "^1.4.28",
+    "mqtt": "^5.15.2",
     "node-notifier": "^10.0.1",
     "rxjs": "^7.8.2"
   },

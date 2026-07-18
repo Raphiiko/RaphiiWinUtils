@@ -4,7 +4,7 @@ import {
   type AudioEndpointVolumeController
 } from "../audio/audioEndpointVolumeController.ts";
 import { buildAudioModeVolumePolicies } from "../audio/audioModeVolumePolicies.ts";
-import type { AudioModePublisher } from "../homeAssistant/audioModePublisher.ts";
+import type { AudioModePublisher } from "../mqtt/audioModePublisher.ts";
 import { VbanTextClient } from "../matrix/vbanTextClient.ts";
 import { Logger } from "../system/logger.ts";
 
