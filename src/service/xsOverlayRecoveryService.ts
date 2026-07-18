@@ -1,7 +1,8 @@
 import type { XsOverlayRecoveryConfig } from "../config/schema.ts";
 import { Logger } from "../system/logger.ts";
 import type { Notifier } from "../system/notify.ts";
-import { requireSuccess, runCommand } from "../system/process.ts";
+import { requireSuccess } from "../system/process.ts";
+import { getRunningProcessNames } from "../system/runningProcesses.ts";
 import {
   createXsOverlayRecoveryState,
   observeXsOverlayProcesses,
@@ -25,6 +26,8 @@ export class XsOverlayRecoveryService {
   private timer?: ReturnType<typeof setInterval>;
   private stopped = false;
   private checking = false;
+  private lastCheckError?: string;
+  private lastCheckErrorAtMs?: number;
 
   constructor(
     config: XsOverlayRecoveryConfig,
@@ -67,6 +70,7 @@ export class XsOverlayRecoveryService {
     try {
       const snapshot = await this.dependencies.probeProcesses();
       if (this.stopped) return;
+      this.clearCheckFailure();
 
       const previous = this.state;
       const result = observeXsOverlayProcesses(
@@ -83,6 +87,18 @@ export class XsOverlayRecoveryService {
         this.log.info("SteamVR stopped; XSOverlay recovery disarmed");
       }
 
+      if (
+        previous.armed &&
+        previous.missingSinceMs === undefined &&
+        this.state.missingSinceMs !== undefined
+      ) {
+        this.log.warn("XSOverlay process disappeared; waiting to confirm crash", {
+          missingConfirmationMs: this.config.missingConfirmationMs
+        });
+      } else if (previous.missingSinceMs !== undefined && snapshot.xsOverlayRunning) {
+        this.log.info("XSOverlay process returned before or after recovery");
+      }
+
       if (!previous.exhausted && this.state.exhausted) {
         this.log.error("XSOverlay recovery attempt budget exhausted", {
           maxLaunchAttempts: this.config.maxLaunchAttempts
@@ -95,10 +111,32 @@ export class XsOverlayRecoveryService {
 
       if (result.action === "launch") await this.launchXsOverlay();
     } catch (error) {
-      this.log.warn("XSOverlay recovery check failed", { error: String(error) });
+      this.logCheckFailure(String(error));
     } finally {
       this.checking = false;
     }
+  }
+
+  private logCheckFailure(error: string): void {
+    const nowMs = this.dependencies.now();
+    const shouldLog =
+      this.lastCheckErrorAtMs === undefined ||
+      nowMs - this.lastCheckErrorAtMs >= 60_000;
+    this.lastCheckError = error;
+    if (shouldLog) {
+      this.lastCheckErrorAtMs = nowMs;
+      this.log.warn("XSOverlay recovery check failed", { error });
+    }
+  }
+
+  private clearCheckFailure(): void {
+    if (this.lastCheckError) {
+      this.log.info("XSOverlay recovery process checks resumed", {
+        previousError: this.lastCheckError
+      });
+    }
+    this.lastCheckError = undefined;
+    this.lastCheckErrorAtMs = undefined;
   }
 
   private async launchXsOverlay(): Promise<void> {
@@ -132,27 +170,7 @@ const defaultDependencies: XsOverlayRecoveryDependencies = {
 };
 
 async function probeProcesses(): Promise<XsOverlayProcessSnapshot> {
-  const result = await runCommand(
-    "powershell.exe",
-    [
-      "-NoProfile",
-      "-NonInteractive",
-      "-Command",
-      "Get-Process -Name vrmonitor, XSOverlay -ErrorAction SilentlyContinue | ForEach-Object ProcessName"
-    ],
-    { timeoutMs: 10_000 }
-  );
-
-  if (result.code !== 0) {
-    throw new Error(`Windows process query failed: ${result.stderr.trim() || result.code}`);
-  }
-
-  const processNames = new Set(
-    result.stdout
-      .split(/\r?\n/)
-      .map((name) => name.trim().toLowerCase())
-      .filter(Boolean)
-  );
+  const processNames = await getRunningProcessNames(["vrmonitor", "XSOverlay"]);
   return {
     steamVrRunning: processNames.has("vrmonitor"),
     xsOverlayRunning: processNames.has("xsoverlay")
