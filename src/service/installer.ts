@@ -153,18 +153,7 @@ function removeStartupShortcut(appName: string): void {
 }
 
 function registerLogonTask(installDir: string, appName: string, launcherPath: string): void {
-  const script = [
-    "$ErrorActionPreference = 'Stop'",
-    `$taskName = "${ps(appName)}"`,
-    `$launcherPath = "${ps(launcherPath)}"`,
-    `$installDir = "${ps(installDir)}"`,
-    "$user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name",
-    '$action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ("//B //Nologo `"" + $launcherPath + "`"") -WorkingDirectory $installDir',
-    "$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user",
-    "$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited",
-    "$settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)",
-    `Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description "${ps(appName)} background service" -Force | Out-Null`
-  ].join("; ");
+  const script = buildLogonTaskRegistrationScript(installDir, appName, launcherPath);
 
   const taskResult = spawnSync(
     "powershell.exe",
@@ -177,6 +166,28 @@ function registerLogonTask(installDir: string, appName: string, launcherPath: st
   if (taskResult.status !== 0) {
     throw new Error(`Failed to register logon task: ${taskResult.stderr}`);
   }
+}
+
+export function buildLogonTaskRegistrationScript(
+  installDir: string,
+  appName: string,
+  launcherPath: string
+): string {
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    `$taskName = "${ps(appName)}"`,
+    `$launcherPath = "${ps(launcherPath)}"`,
+    `$installDir = "${ps(installDir)}"`,
+    "$user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name",
+    '$action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ("//B //Nologo `"" + $launcherPath + "`"") -WorkingDirectory $installDir',
+    "$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user",
+    "$watchdogTrigger = New-ScheduledTaskTrigger -Daily -At '00:00'",
+    "$watchdogRepetition = New-ScheduledTaskTrigger -Once -At '00:00' -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 1)",
+    "$watchdogTrigger.Repetition = $watchdogRepetition.Repetition",
+    "$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited",
+    "$settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)",
+    `Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($trigger, $watchdogTrigger) -Principal $principal -Settings $settings -Description "${ps(appName)} background service" -Force | Out-Null`
+  ].join("; ");
 }
 
 function startLogonTask(appName: string, log: Logger): void {

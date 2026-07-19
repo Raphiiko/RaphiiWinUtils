@@ -150,8 +150,8 @@ export const defaultConfig: AppConfig = {
     routeRetryCount: 5,
     routeRetryDelayMs: 500,
     modes: {
-      "desk-mic": {
-        name: "Desk Mic",
+      "headset-desk-mic": {
+        name: "Headset + Desk Mic",
         outputDeviceName: "Headset (3- Arctis Nova Pro Wireless)",
         micInputSlot: "WIN1.IN",
         micRoutes: [
@@ -180,8 +180,8 @@ export const defaultConfig: AppConfig = {
           { inputChannel: 2, outputChannel: 2 }
         ]
       },
-      iem: {
-        name: "IEM",
+      iems: {
+        name: "IEMs",
         outputDeviceName: "In Ear Monitors (2- USB-C to 3.5mm Headphone Jack Adapter)",
         micInputSlot: "WIN1.IN",
         micRoutes: [
@@ -189,8 +189,8 @@ export const defaultConfig: AppConfig = {
           { inputChannel: 1, outputChannel: 2 }
         ]
       },
-      speaker: {
-        name: "Speaker",
+      "desk-speakers": {
+        name: "Desk Speakers",
         outputDeviceName: "Desktop Speakers (USB SPDIF Adapter)",
         micInputSlot: "WIN1.IN",
         micRoutes: [
