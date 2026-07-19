@@ -7,7 +7,6 @@ const MAX_TEXT_BYTES = 1436;
 
 export class VbanTextClient {
   private frame = 0;
-  private readonly socket = dgram.createSocket("udp4");
   private readonly log: Logger;
   private readonly config: MatrixConfig;
 
@@ -36,17 +35,23 @@ export class VbanTextClient {
   async request(command: string, timeoutMs = 750): Promise<string[]> {
     const packet = this.createPacket(command);
     const responses: string[] = [];
+    const socket = dgram.createSocket("udp4");
 
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        cleanup();
-        resolve();
+        finish(resolve);
       }, timeoutMs);
 
       const cleanup = () => {
         clearTimeout(timeout);
-        this.socket.off("message", onMessage);
-        this.socket.off("error", onError);
+        socket.off("message", onMessage);
+        socket.off("error", onError);
+        socket.close();
+      };
+
+      const finish = (complete: () => void) => {
+        cleanup();
+        complete();
       };
 
       const onMessage = (message: Buffer) => {
@@ -54,14 +59,13 @@ export class VbanTextClient {
       };
 
       const onError = (error: Error) => {
-        cleanup();
-        reject(error);
+        finish(() => reject(error));
       };
 
-      this.socket.on("message", onMessage);
-      this.socket.once("error", onError);
-      this.socket.bind(0, () => {
-        this.socket.send(packet, this.config.port, this.config.host, (error) => {
+      socket.on("message", onMessage);
+      socket.once("error", onError);
+      socket.bind(0, () => {
+        socket.send(packet, this.config.port, this.config.host, (error) => {
           if (error) onError(error);
         });
       });
@@ -72,7 +76,7 @@ export class VbanTextClient {
   }
 
   async close(): Promise<void> {
-    await new Promise<void>((resolve) => this.socket.close(() => resolve()));
+    // Requests use short-lived sockets and sends already close their own socket.
   }
 
   private createPacket(command: string): Buffer {
