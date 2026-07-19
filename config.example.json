@@ -144,6 +144,18 @@
     "steamVrExitWaitMs": 5000,
     "steamVrStartWaitMs": 5000
   },
+  "hardRecovery": {
+    "enabled": true,
+    "desktopSettleMs": 90000,
+    "matrixReadyTimeoutMs": 180000,
+    "matrixReadyRetryDelayMs": 5000,
+    "steamReadyTimeoutMs": 90000,
+    "steamVrReadyTimeoutMs": 90000,
+    "oyasumiReadyTimeoutMs": 60000,
+    "vrChatJoinTimeoutMs": 120000,
+    "retryDelayMs": 10000,
+    "maxLaunchAttempts": 2
+  },
   "updater": {
     "enabled": true,
     "repoUrl": "https://github.com/Raphiiko/RaphiiWinUtils.git",

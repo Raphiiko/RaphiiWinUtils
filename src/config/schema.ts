@@ -6,6 +6,7 @@ export interface AppConfig {
   clipboard: ClipboardAutomationConfig;
   xsOverlayRecovery: XsOverlayRecoveryConfig;
   vrChatRecovery: VrChatRecoveryConfig;
+  hardRecovery: HardRecoveryConfig;
   updater: UpdaterConfig;
   control: ControlConfig;
   notifications: NotificationConfig;
@@ -98,6 +99,20 @@ export interface VrChatRecoveryConfig {
   vrChatExitWaitMs: number;
   steamVrExitWaitMs: number;
   steamVrStartWaitMs: number;
+}
+
+export interface HardRecoveryConfig {
+  enabled: boolean;
+  /** Allow the interactive desktop and startup applications to settle after logon. */
+  desktopSettleMs: number;
+  matrixReadyTimeoutMs: number;
+  matrixReadyRetryDelayMs: number;
+  steamReadyTimeoutMs: number;
+  steamVrReadyTimeoutMs: number;
+  oyasumiReadyTimeoutMs: number;
+  vrChatJoinTimeoutMs: number;
+  retryDelayMs: number;
+  maxLaunchAttempts: number;
 }
 
 export interface UpdaterConfig {
@@ -244,6 +259,18 @@ export const defaultConfig: AppConfig = {
     vrChatExitWaitMs: 3000,
     steamVrExitWaitMs: 5000,
     steamVrStartWaitMs: 5000
+  },
+  hardRecovery: {
+    enabled: true,
+    desktopSettleMs: 90_000,
+    matrixReadyTimeoutMs: 180_000,
+    matrixReadyRetryDelayMs: 5_000,
+    steamReadyTimeoutMs: 90_000,
+    steamVrReadyTimeoutMs: 90_000,
+    oyasumiReadyTimeoutMs: 60_000,
+    vrChatJoinTimeoutMs: 120_000,
+    retryDelayMs: 10_000,
+    maxLaunchAttempts: 2
   },
   updater: {
     enabled: true,

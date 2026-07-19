@@ -79,20 +79,63 @@ POST http://127.0.0.1:17642/audio/volumes/:name
 The `POST /update/check` route queues one self-update check. If a check is already running it returns `409` and leaves the running check alone.
 The volume endpoint expects `{ "volumePercent": 0..100 }` and remains localhost-only.
 
-## Home Assistant VRChat Recovery
+## Home Assistant VR Recovery
 
-When MQTT is enabled, the discovered **Shirakami** device also exposes two buttons:
+When MQTT is enabled, the discovered **Shirakami** device exposes two mutually exclusive buttons:
 
-- **Recover VRChat** stops a running `VRChat.exe`, remembers the last instance from VRChat's newest
-  `output_log_*.txt`, restarts SteamVR, and relaunches VRChat into that instance when one was found.
-- **Start VRChat** performs the same clean restart but launches into the normal VRChat home world.
+- **Start VRChat** cleanly restarts the VR stack and launches VRChat normally.
+- **SteamVR soft recovery** cleanly restarts VRChat, SteamVR, and OyasumiVR, then rejoins the latest
+  VRChat instance found in `output_log_*.txt`.
 
-The actions are process-wide serialized: a second button press while either action is running is
-ignored. SteamVR is launched through Steam app `250820`, and VRChat through app `438100`; VRChat is
-started without `--no-vr`, so it uses the active SteamVR runtime. Configure timings or a non-default
-Steam location under `vrChatRecovery` in `%APPDATA%\RaphiiWinUtils\config.json`.
-Because VRChat is launched through Steam rather than directly through `VRChat.exe`, any VRChat launch
-options configured in Steam (such as CPU-affinity settings) continue to apply.
+Hard recovery is owned by Home Assistant and is deliberately requested over MQTT with an owner-created
+operation ID; it records that instance, force-stops the VR stack, and requests `shutdown.exe /r /f /t 0`.
+The forced reboot does not wait for Windows' application-close prompt.
+
+All three routes go through one shared coordinator. A second request while any recovery is active is
+rejected, and duplicate MQTT delivery cannot start a second recovery. SteamVR is launched through
+Steam app `250820`, OyasumiVR through `2538150`, and VRChat through `438100`; launching through Steam
+preserves any Steam launch options such as CPU affinity.
+
+Hard recovery needs Windows autologin because Steam, SteamVR, and VRChat must run in the interactive
+desktop session. After Windows logs in and RaphiiWinUtils reconnects to MQTT, Home Assistant resumes
+the original operation. RaphiiWinUtils then waits for the desktop settling period, a verified
+VBAN-TEXT reply from Matrix Coconut, Steam, SteamVR, OyasumiVR, and finally VRChat. Each stage has a
+bounded timeout and launch retry budget configured under `hardRecovery`.
+
+The retained `raphiiwinutils/shirakami/vr/recovery/status` topic contains JSON with an operation ID,
+phase, timestamps, attempt count, captured instance ID, and failure reason. It is also exposed as the
+**VR recovery status** MQTT sensor. The local hard-recovery journal is stored at:
+
+```text
+%APPDATA%\RaphiiWinUtils\hard-recovery-status.json
+```
+
+The recovery owner must resume only the operation it observed by publishing this non-retained command
+after RWU returns online:
+
+```json
+topic: raphiiwinutils/shirakami/vr/recovery/hard/resume/set
+payload: { "operationId": "<status.operationId>" }
+```
+
+To begin a hard recovery, publish a non-retained JSON request. RWU persists and confirms this same
+operation ID on the status topic before it asks Windows to reboot:
+
+```json
+topic: raphiiwinutils/shirakami/vr/recovery/hard/set
+payload: { "operationId": "<new UUID generated and retained by Home Assistant>" }
+```
+
+If the owner observes that reboot never happened or the PC did not return by its deadline, it should
+end the operation explicitly instead of leaving the coordinator locked:
+
+```json
+topic: raphiiwinutils/shirakami/vr/recovery/hard/cancel/set
+payload: { "operationId": "<status.operationId>", "reason": "PC did not return after reboot" }
+```
+
+These control commands must never be retained. Terminal phases are `completed`,
+`completed-with-warning`, and `failed-needs-attention`; no automatic second reboot is issued.
 
 ## Home Assistant Audio Control
 
@@ -131,9 +174,9 @@ and direct Windows virtual-device volume changes are published back to the same 
 The MQTT-discovered **Shirakami** device contains the audio-mode select, five volume sliders, and
 availability status. Add those entities to any dashboard; no YAML helpers or REST token are needed.
 
-Its VRChat controls restart SteamVR and launch VRChat (or recover the most recently joined instance).
-They also launch OyasumiVR through Steam app `2538150` unless its `OyasumiVR.exe` process is already
-running. Configure the Steam app IDs and launch delays under `vrChatRecovery`.
+Its VR controls restart the VR stack, recover the most recently joined instance, or request the
+durable hard-recovery workflow. Configure Steam app IDs and soft-recovery delays under
+`vrChatRecovery`, and hard-recovery readiness windows under `hardRecovery`.
 
 ## Audio Mode Volume Policies
 

@@ -97,10 +97,11 @@ void test("publishes discovery and only confirms an MQTT mode after the local co
   service.stop();
 });
 
-void test("publishes VRChat buttons and routes their presses to the recovery service", async () => {
+void test("publishes VR recovery buttons and routes their presses through the shared recovery service", async () => {
   const client = new FakeMqttClient();
   let recoverCalls = 0;
   let startCalls = 0;
+  let hardRecoverCalls = 0;
   const service = new MqttAudioSyncService(
     { ...defaultConfig.mqtt, enabled: true, password: "test-password" },
     { listModes: () => [deskSpeakers], applyMode: () => Promise.resolve(deskSpeakers) },
@@ -115,7 +116,15 @@ void test("publishes VRChat buttons and routes their presses to the recovery ser
       startVrChat: () => {
         startCalls += 1;
         return Promise.resolve({ accepted: true });
-      }
+      },
+      hardRecover: () => {
+        hardRecoverCalls += 1;
+        return Promise.resolve({ accepted: true, operationId: "hard-1" });
+      },
+      resumeHardRecovery: () => Promise.resolve({ accepted: true }),
+      cancelHardRecovery: () => Promise.resolve({ accepted: true }),
+      getStatus: () => ({ phase: "idle", updatedAt: "2026-01-01T00:00:00.000Z" }),
+      onStatusChange: () => () => {}
     }
   );
 
@@ -123,17 +132,17 @@ void test("publishes VRChat buttons and routes their presses to the recovery ser
   await waitFor(() => client.hasListener("connect"));
   client.emit("connect");
   await waitFor(() =>
-    client.published.some((message) => message.topic.endsWith("recover_vrchat/config"))
+    client.published.some((message) => message.topic.endsWith("steamvr_soft_recovery/config"))
   );
 
   const recoveryButton = client.published.find((message) =>
-    message.topic.endsWith("recover_vrchat/config")
+    message.topic.endsWith("steamvr_soft_recovery/config")
   );
   assert.deepEqual(JSON.parse(recoveryButton?.payload ?? "{}"), {
-    name: "Recover VRChat",
-    unique_id: "raphiiwinutils_shirakami_recover_vrchat",
-    object_id: "shirakami_recover_vrchat",
-    command_topic: "raphiiwinutils/shirakami/vrchat/recover-last-instance/set",
+    name: "SteamVR soft recovery",
+    unique_id: "raphiiwinutils_shirakami_steamvr_soft_recovery",
+    object_id: "shirakami_steamvr_soft_recovery",
+    command_topic: "raphiiwinutils/shirakami/vr/recovery/soft/set",
     payload_press: "PRESS",
     retain: true,
     qos: 1,
@@ -150,16 +159,21 @@ void test("publishes VRChat buttons and routes their presses to the recovery ser
     }
   });
 
-  client.emit(
-    "message",
-    "raphiiwinutils/shirakami/vrchat/recover-last-instance/set",
-    Buffer.from("PRESS"),
-    { retain: false }
-  );
-  client.emit("message", "raphiiwinutils/shirakami/vrchat/start/set", Buffer.from("PRESS"), {
+  client.emit("message", "raphiiwinutils/shirakami/vr/recovery/soft/set", Buffer.from("PRESS"), {
     retain: false
   });
-  await waitFor(() => recoverCalls === 1 && startCalls === 1);
+  client.emit("message", "raphiiwinutils/shirakami/vr/recovery/start/set", Buffer.from("PRESS"), {
+    retain: false
+  });
+  client.emit(
+    "message",
+    "raphiiwinutils/shirakami/vr/recovery/hard/set",
+    Buffer.from('{"operationId":"hard-1"}'),
+    {
+      retain: false
+    }
+  );
+  await waitFor(() => recoverCalls === 1 && startCalls === 1 && hardRecoverCalls === 1);
   service.stop();
 });
 
@@ -177,7 +191,12 @@ void test("does not replay retained MQTT VRChat button presses", async () => {
         recoverCalls += 1;
         return Promise.resolve({ accepted: true });
       },
-      startVrChat: () => Promise.resolve({ accepted: true })
+      startVrChat: () => Promise.resolve({ accepted: true }),
+      hardRecover: () => Promise.resolve({ accepted: true }),
+      resumeHardRecovery: () => Promise.resolve({ accepted: true }),
+      cancelHardRecovery: () => Promise.resolve({ accepted: true }),
+      getStatus: () => ({ phase: "idle", updatedAt: "2026-01-01T00:00:00.000Z" }),
+      onStatusChange: () => () => {}
     }
   );
 
@@ -186,12 +205,9 @@ void test("does not replay retained MQTT VRChat button presses", async () => {
   client.emit("connect");
   await waitFor(() => client.hasListener("message"));
 
-  client.emit(
-    "message",
-    "raphiiwinutils/shirakami/vrchat/recover-last-instance/set",
-    Buffer.from("PRESS"),
-    { retain: true }
-  );
+  client.emit("message", "raphiiwinutils/shirakami/vr/recovery/soft/set", Buffer.from("PRESS"), {
+    retain: true
+  });
   await new Promise<void>((resolve) => setImmediate(resolve));
 
   assert.equal(recoverCalls, 0);

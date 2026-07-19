@@ -27,7 +27,7 @@ export function createServiceModules(
         channelVolumeService.policiesThatNeedApply(policies)
     }
   );
-  const vrChatRecoveryService = new VrChatRecoveryService(config.vrChatRecovery, logger);
+  const vrChatRecoveryService = new VrChatRecoveryService(config, logger);
   const mqttAudioSync = new MqttAudioSyncService(
     config.mqtt,
     audioModeService,
@@ -54,6 +54,7 @@ export function createServiceModules(
   return [
     serviceModule("updater", updater),
     serviceModule("channel-volume", channelVolumeService),
+    serviceModule("vr-recovery", vrChatRecoveryService),
     serviceModule("audio-control", {
       start: () => {
         controlServer.start();

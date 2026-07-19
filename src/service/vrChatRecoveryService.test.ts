@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "node:test";
 import { defaultConfig } from "../config/schema.ts";
 import { Logger } from "../system/logger.ts";
 import {
@@ -7,115 +7,87 @@ import {
   findMostRecentVrChatLog,
   toVrChatLaunchUrl,
   VrChatRecoveryService,
-  type VrChatRecoveryDependencies
+  type VrChatRecoveryDependencies,
+  type VrRecoveryStatus
 } from "./vrChatRecoveryService.ts";
 
-void test("recovers VRChat into the last logged instance after restarting SteamVR", async () => {
-  const calls: string[] = [];
-  const service = new VrChatRecoveryService(defaultConfig.vrChatRecovery, new Logger("test"), {
-    findLastInstanceId: () => {
-      calls.push("find-last-instance");
-      return Promise.resolve("wrld_12345678-1234-1234-1234-123456789abc:42~region(eu)");
-    },
-    getRunningProcessNames: (names) => {
-      calls.push(`probe:${names[0]}`);
-      return Promise.resolve(new Set([names[0].toLowerCase()]));
-    },
-    stopProcesses: (names) => {
-      calls.push(`stop:${names[0]}`);
-      return Promise.resolve();
-    },
-    launchSteamApp: (_steamPath, appId, args = []) => {
-      calls.push(`launch:${appId}:${args.join(",")}`);
-      return Promise.resolve();
-    },
-    sleep: (ms) => {
-      calls.push(`sleep:${ms}`);
-      return Promise.resolve();
-    }
-  });
+void test("soft recovery serializes VR stack launch and restores the last instance", async () => {
+  const events: string[] = [];
+  const service = new VrChatRecoveryService(testConfig(), new Logger("test"), dependencies(events));
 
-  assert.deepEqual(await service.recoverLastInstance(), { accepted: true });
-  assert.deepEqual(calls, [
-    "find-last-instance",
-    "probe:vrchat",
-    "stop:VRChat",
-    "sleep:3000",
-    "probe:vrmonitor",
-    "stop:vrmonitor",
+  assert.deepEqual(await service.recoverLastInstance(), {
+    accepted: true,
+    operationId: "operation-1"
+  });
+  assert.deepEqual(events, [
+    "find-instance",
+    "stop:VRChat,OyasumiVR,vrmonitor,vrserver",
     "sleep:5000",
-    "launch:250820:",
-    "probe:OyasumiVR",
+    "launch:250820",
     "sleep:5000",
+    "probe:oyasumivr",
     "launch:438100:vrchat://launch?ref=vrchat.com&id=wrld_12345678-1234-1234-1234-123456789abc:42~region(eu)"
   ]);
 });
 
-void test("starts OyasumiVR alongside SteamVR when it is not already running", async () => {
-  const calls: string[] = [];
-  const service = new VrChatRecoveryService(defaultConfig.vrChatRecovery, new Logger("test"), {
-    findLastInstanceId: () => Promise.resolve(undefined),
-    getRunningProcessNames: (names) => {
-      calls.push(`probe:${names[0]}`);
-      return Promise.resolve(new Set());
-    },
-    stopProcesses: async () => {},
-    launchSteamApp: (_steamPath, appId, args = []) => {
-      calls.push(`launch:${appId}:${args.join(",")}`);
-      return Promise.resolve();
-    },
-    sleep: (ms) => {
-      calls.push(`sleep:${ms}`);
-      return Promise.resolve();
-    }
-  });
-
-  assert.deepEqual(await service.startVrChat(), { accepted: true });
-  assert.deepEqual(calls, [
-    "probe:vrchat",
-    "probe:vrmonitor",
-    "launch:250820:",
-    "probe:OyasumiVR",
-    "launch:2538150:",
-    "sleep:5000",
-    "launch:438100:"
-  ]);
-});
-
-void test("rejects a second VRChat action while the first is still running", async () => {
-  let releaseFirstAction: (() => void) | undefined;
-  const waitForFirstAction = new Promise<void>((resolve) => {
-    releaseFirstAction = resolve;
-  });
-  const dependencies: VrChatRecoveryDependencies = {
-    findLastInstanceId: async () => {
-      await waitForFirstAction;
-      return undefined;
-    },
-    getRunningProcessNames: () => Promise.resolve(new Set()),
-    stopProcesses: async () => {},
-    launchSteamApp: async () => {},
-    sleep: async () => {}
-  };
-  const service = new VrChatRecoveryService(
-    defaultConfig.vrChatRecovery,
+void test("a pending hard recovery blocks soft recovery until the matching resume completes", async () => {
+  const events: string[] = [];
+  let saved: VrRecoveryStatus | undefined;
+  const first = new VrChatRecoveryService(
+    testConfig(),
     new Logger("test"),
-    dependencies
+    dependencies(events, {
+      requestReboot: () => {
+        events.push("reboot");
+        return Promise.resolve();
+      },
+      saveStatus: (status) => {
+        saved = structuredClone(status);
+        return Promise.resolve();
+      }
+    })
   );
 
-  const firstAction = service.recoverLastInstance();
-  assert.deepEqual(await service.startVrChat(), { accepted: false });
-  releaseFirstAction?.();
-  assert.deepEqual(await firstAction, { accepted: true });
+  const request = await first.hardRecover();
+  assert.equal(request.accepted, true);
+  await waitFor(() => first.getStatus().phase === "reboot-commanded");
+  assert.equal((await first.startVrChat()).accepted, false);
+
+  const resumed = new VrChatRecoveryService(
+    testConfig(),
+    new Logger("test"),
+    dependencies(events, {
+      loadStatus: () => Promise.resolve(saved),
+      getBootMarker: () => Promise.resolve("boot-marker-after-reboot"),
+      saveStatus: (status) => {
+        saved = structuredClone(status);
+        return Promise.resolve();
+      }
+    })
+  );
+  await resumed.start();
+  assert.equal(resumed.getStatus().phase, "awaiting-rwu-after-boot");
+  assert.deepEqual(await resumed.resumeHardRecovery(request.operationId ?? ""), {
+    accepted: true,
+    operationId: "operation-1"
+  });
+  await waitFor(() => resumed.getStatus().phase === "completed");
+  assert.equal(events.includes("reboot"), true);
+  assert.equal(events.includes("matrix"), true);
+  assert.equal(events.includes("launch:250820"), true);
+  assert.equal(
+    events.includes(
+      "launch:438100:vrchat://launch?ref=vrchat.com&id=wrld_12345678-1234-1234-1234-123456789abc:42~region(eu)"
+    ),
+    true
+  );
 });
 
 void test("uses the final joined world instance from a VRChat log", () => {
   const instanceId = findLastInstanceIdInLog(`
-    2026.07.18 Log - [Behaviour] Joining wrld_11111111-1111-1111-1111-111111111111:old~region(us)
-    2026.07.18 Log - [Behaviour] Joining wrld_22222222-2222-2222-2222-222222222222:new~region(eu)
-    2026.07.18 Log - [Analytics] Previous world wrld_33333333-3333-3333-3333-333333333333:not-a-join
+    [Behaviour] Joining wrld_11111111-1111-1111-1111-111111111111:old~region(us)
+    [Behaviour] Joining or Creating Room: wrld_22222222-2222-2222-2222-222222222222:new~region(eu)
   `);
-
   assert.equal(instanceId, "wrld_22222222-2222-2222-2222-222222222222:new~region(eu)");
   assert.equal(
     toVrChatLaunchUrl(instanceId),
@@ -126,9 +98,84 @@ void test("uses the final joined world instance from a VRChat log", () => {
 void test("selects the most recently modified VRChat log", () => {
   assert.deepEqual(
     findMostRecentVrChatLog([
-      { path: "output_log_2026-07-18_20-00-00.txt", modifiedAtMs: 100 },
-      { path: "output_log_2026-07-18_19-00-00.txt", modifiedAtMs: 200 }
+      { path: "old", modifiedAtMs: 10 },
+      { path: "new", modifiedAtMs: 20 }
     ]),
-    { path: "output_log_2026-07-18_19-00-00.txt", modifiedAtMs: 200 }
+    { path: "new", modifiedAtMs: 20 }
   );
 });
+
+function testConfig() {
+  return {
+    ...structuredClone(defaultConfig),
+    hardRecovery: {
+      ...defaultConfig.hardRecovery,
+      desktopSettleMs: 0,
+      matrixReadyTimeoutMs: 10,
+      steamReadyTimeoutMs: 10,
+      steamVrReadyTimeoutMs: 10,
+      oyasumiReadyTimeoutMs: 10,
+      vrChatJoinTimeoutMs: 10,
+      retryDelayMs: 0,
+      matrixReadyRetryDelayMs: 0,
+      maxLaunchAttempts: 1
+    }
+  };
+}
+
+function dependencies(
+  events: string[],
+  overrides: Partial<VrChatRecoveryDependencies> = {}
+): Partial<VrChatRecoveryDependencies> {
+  const instanceId = "wrld_12345678-1234-1234-1234-123456789abc:42~region(eu)";
+  let operation = 0;
+  return {
+    findLastInstanceId: () => {
+      events.push("find-instance");
+      return Promise.resolve(instanceId);
+    },
+    getRunningProcessNames: (names) => {
+      events.push(`probe:${names[0]?.toLowerCase()}`);
+      return Promise.resolve(new Set(names.map((name) => name.toLowerCase())));
+    },
+    stopProcesses: (names) => {
+      events.push(`stop:${names.join(",")}`);
+      return Promise.resolve();
+    },
+    launchSteamClient: () => {
+      events.push("launch-steam");
+      return Promise.resolve();
+    },
+    launchSteamApp: (_path, appId, args = []) => {
+      events.push(`launch:${appId}${args.length ? `:${args.join(",")}` : ""}`);
+      return Promise.resolve();
+    },
+    isMatrixReady: () => {
+      events.push("matrix");
+      return Promise.resolve(true);
+    },
+    hasJoinedInstanceSince: () => Promise.resolve(true),
+    requestReboot: () => {
+      events.push("reboot");
+      return Promise.resolve();
+    },
+    sleep: (ms) => {
+      events.push(`sleep:${ms}`);
+      return Promise.resolve();
+    },
+    loadStatus: () => Promise.resolve(undefined),
+    saveStatus: async () => {},
+    createOperationId: () => `operation-${++operation}`,
+    now: () => new Date(),
+    getBootMarker: () => Promise.resolve("boot-marker"),
+    ...overrides
+  };
+}
+
+async function waitFor(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (condition()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.fail("condition did not become true");
+}
