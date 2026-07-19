@@ -141,20 +141,21 @@
     "oyasumiVrAppId": "2538150",
     "vrChatAppId": "438100",
     "vrChatExitWaitMs": 3000,
-    "steamVrExitWaitMs": 5000,
-    "steamVrStartWaitMs": 5000
+    "steamVrExitWaitMs": 5000
   },
-  "hardRecovery": {
-    "enabled": true,
-    "desktopSettleMs": 90000,
-    "matrixReadyTimeoutMs": 180000,
-    "matrixReadyRetryDelayMs": 5000,
+  "vrStackStartup": {
     "steamReadyTimeoutMs": 90000,
     "steamVrReadyTimeoutMs": 90000,
     "oyasumiReadyTimeoutMs": 60000,
     "vrChatJoinTimeoutMs": 120000,
     "retryDelayMs": 10000,
     "maxLaunchAttempts": 2
+  },
+  "hardRecovery": {
+    "enabled": true,
+    "desktopSettleMs": 90000,
+    "matrixReadyTimeoutMs": 180000,
+    "matrixReadyRetryDelayMs": 5000
   },
   "updater": {
     "enabled": true,

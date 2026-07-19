@@ -99,8 +99,9 @@ preserves any Steam launch options such as CPU affinity.
 Hard recovery needs Windows autologin because Steam, SteamVR, and VRChat must run in the interactive
 desktop session. After Windows logs in and RaphiiWinUtils reconnects to MQTT, Home Assistant resumes
 the original operation. RaphiiWinUtils then waits for the desktop settling period, a verified
-VBAN-TEXT reply from Matrix Coconut, Steam, SteamVR, OyasumiVR, and finally VRChat. Each stage has a
-bounded timeout and launch retry budget configured under `hardRecovery`.
+VBAN-TEXT reply from Matrix Coconut, Steam, SteamVR, OyasumiVR, and finally VRChat. Matrix and
+desktop waits are configured under `hardRecovery`; VR-stack readiness and retry budgets are under
+`vrStackStartup`.
 
 The retained `raphiiwinutils/shirakami/vr/recovery/status` topic contains JSON with an operation ID,
 phase, timestamps, attempt count, captured instance ID, and failure reason. It is also exposed as the
@@ -175,8 +176,9 @@ The MQTT-discovered **Shirakami** device contains the audio-mode select, five vo
 availability status. Add those entities to any dashboard; no YAML helpers or REST token are needed.
 
 Its VR controls restart the VR stack, recover the most recently joined instance, or request the
-durable hard-recovery workflow. Configure Steam app IDs and soft-recovery delays under
-`vrChatRecovery`, and hard-recovery readiness windows under `hardRecovery`.
+durable hard-recovery workflow. Configure Steam app IDs and shutdown waits under
+`vrChatRecovery`, shared VR-stack readiness and retry windows under `vrStackStartup`, and
+post-reboot Matrix/desktop waits under `hardRecovery`.
 
 ## Audio Mode Volume Policies
 

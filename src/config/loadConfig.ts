@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { migrateAudioModeOverrides } from "./audioModeIds.ts";
-import { defaultConfig, type AppConfig } from "./schema.ts";
+import { defaultConfig, type AppConfig, type VrStackStartupConfig } from "./schema.ts";
 
 export function getConfigPath(): string {
   const appData = process.env.APPDATA ?? join(process.env.USERPROFILE ?? ".", "AppData", "Roaming");
@@ -23,6 +23,9 @@ export async function loadConfig(): Promise<AppConfig> {
 
 function mergeConfig(base: AppConfig, override: Partial<AppConfig>): AppConfig {
   const modeOverrides = migrateAudioModeOverrides(override.audioModes?.modes);
+  // Startup readiness settings used to live under hardRecovery. Preserve local overrides while
+  // letting the dedicated shared setting take precedence.
+  const legacyVrStackStartup = override.hardRecovery as Partial<VrStackStartupConfig> | undefined;
   return {
     matrix: { ...base.matrix, ...override.matrix },
     audio: {
@@ -42,6 +45,11 @@ function mergeConfig(base: AppConfig, override: Partial<AppConfig>): AppConfig {
     clipboard: { ...base.clipboard, ...override.clipboard },
     xsOverlayRecovery: { ...base.xsOverlayRecovery, ...override.xsOverlayRecovery },
     vrChatRecovery: { ...base.vrChatRecovery, ...override.vrChatRecovery },
+    vrStackStartup: {
+      ...base.vrStackStartup,
+      ...legacyVrStackStartup,
+      ...override.vrStackStartup
+    },
     hardRecovery: { ...base.hardRecovery, ...override.hardRecovery },
     updater: { ...base.updater, ...override.updater },
     control: { ...base.control, ...override.control },

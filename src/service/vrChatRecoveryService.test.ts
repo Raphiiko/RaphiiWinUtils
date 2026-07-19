@@ -23,11 +23,101 @@ void test("soft recovery serializes VR stack launch and restores the last instan
     "find-instance",
     "stop:VRChat,OyasumiVR,vrmonitor,vrserver",
     "sleep:5000",
+    "probe:steam",
+    "probe:steam",
     "launch:250820",
-    "sleep:5000",
+    "probe:vrmonitor",
+    "probe:vrserver",
     "probe:oyasumivr",
-    "launch:438100:vrchat://launch?ref=vrchat.com&id=wrld_12345678-1234-1234-1234-123456789abc:42~region(eu)"
+    "launch:438100:vrchat://launch?ref=vrchat.com&id=wrld_12345678-1234-1234-1234-123456789abc:42~region(eu)",
+    "probe:vrchat"
   ]);
+});
+
+void test("start waits for each VR stack dependency before launching its dependent", async () => {
+  const events: string[] = [];
+  const running = new Set<string>();
+  let oyasumiLaunchRequested = false;
+  let oyasumiReadinessChecks = 0;
+  const service = new VrChatRecoveryService(
+    testConfig(),
+    new Logger("test"),
+    dependencies(events, {
+      getRunningProcessNames: (names) => {
+        events.push(`probe:${names.join(",").toLowerCase()}`);
+        if (names[0]?.toLowerCase() === "oyasumivr" && oyasumiLaunchRequested) {
+          oyasumiReadinessChecks += 1;
+          if (oyasumiReadinessChecks >= 2) running.add("oyasumivr");
+        }
+        return Promise.resolve(new Set(names.filter((name) => running.has(name.toLowerCase()))));
+      },
+      launchSteamClient: () => {
+        events.push("launch-steam");
+        running.add("steam");
+        return Promise.resolve();
+      },
+      launchSteamApp: (_path, appId, args = []) => {
+        events.push(`launch:${appId}${args.length ? `:${args.join(",")}` : ""}`);
+        if (appId === "250820") {
+          running.add("vrmonitor");
+          running.add("vrserver");
+        }
+        if (appId === "2538150") oyasumiLaunchRequested = true;
+        if (appId === "438100") running.add("vrchat");
+        return Promise.resolve();
+      }
+    })
+  );
+
+  assert.deepEqual(await service.startVrChat(), { accepted: true, operationId: "operation-1" });
+  assert.deepEqual(events, [
+    "stop:VRChat,OyasumiVR,vrmonitor,vrserver",
+    "sleep:5000",
+    "probe:steam",
+    "launch-steam",
+    "probe:steam",
+    "launch:250820",
+    "probe:vrmonitor",
+    "probe:vrserver",
+    "probe:oyasumivr",
+    "launch:2538150",
+    "probe:oyasumivr",
+    "sleep:0",
+    "probe:oyasumivr",
+    "launch:438100",
+    "probe:vrchat"
+  ]);
+});
+
+void test("start does not launch VRChat when OyasumiVR never becomes ready", async () => {
+  const events: string[] = [];
+  const running = new Set<string>();
+  const config = testConfig();
+  config.vrStackStartup.oyasumiReadyTimeoutMs = 0;
+  const service = new VrChatRecoveryService(
+    config,
+    new Logger("test"),
+    dependencies(events, {
+      getRunningProcessNames: (names) =>
+        Promise.resolve(new Set(names.filter((name) => running.has(name.toLowerCase())))),
+      launchSteamClient: () => {
+        running.add("steam");
+        return Promise.resolve();
+      },
+      launchSteamApp: (_path, appId) => {
+        events.push(`launch:${appId}`);
+        if (appId === "250820") {
+          running.add("vrmonitor");
+          running.add("vrserver");
+        }
+        return Promise.resolve();
+      }
+    })
+  );
+
+  assert.equal((await service.startVrChat()).accepted, false);
+  assert.equal(events.includes("launch:2538150"), true);
+  assert.equal(events.includes("launch:438100"), false);
 });
 
 void test("a pending hard recovery blocks soft recovery until the matching resume completes", async () => {
@@ -112,12 +202,15 @@ function testConfig() {
       ...defaultConfig.hardRecovery,
       desktopSettleMs: 0,
       matrixReadyTimeoutMs: 10,
+      matrixReadyRetryDelayMs: 0
+    },
+    vrStackStartup: {
+      ...defaultConfig.vrStackStartup,
       steamReadyTimeoutMs: 10,
       steamVrReadyTimeoutMs: 10,
       oyasumiReadyTimeoutMs: 10,
       vrChatJoinTimeoutMs: 10,
       retryDelayMs: 0,
-      matrixReadyRetryDelayMs: 0,
       maxLaunchAttempts: 1
     }
   };

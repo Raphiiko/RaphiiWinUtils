@@ -6,6 +6,7 @@ export interface AppConfig {
   clipboard: ClipboardAutomationConfig;
   xsOverlayRecovery: XsOverlayRecoveryConfig;
   vrChatRecovery: VrChatRecoveryConfig;
+  vrStackStartup: VrStackStartupConfig;
   hardRecovery: HardRecoveryConfig;
   updater: UpdaterConfig;
   control: ControlConfig;
@@ -98,7 +99,6 @@ export interface VrChatRecoveryConfig {
   vrChatAppId: string;
   vrChatExitWaitMs: number;
   steamVrExitWaitMs: number;
-  steamVrStartWaitMs: number;
 }
 
 export interface HardRecoveryConfig {
@@ -107,6 +107,10 @@ export interface HardRecoveryConfig {
   desktopSettleMs: number;
   matrixReadyTimeoutMs: number;
   matrixReadyRetryDelayMs: number;
+}
+
+/** Readiness and retry policy shared by every VR stack startup. */
+export interface VrStackStartupConfig {
   steamReadyTimeoutMs: number;
   steamVrReadyTimeoutMs: number;
   oyasumiReadyTimeoutMs: number;
@@ -257,20 +261,21 @@ export const defaultConfig: AppConfig = {
     oyasumiVrAppId: "2538150",
     vrChatAppId: "438100",
     vrChatExitWaitMs: 3000,
-    steamVrExitWaitMs: 5000,
-    steamVrStartWaitMs: 5000
+    steamVrExitWaitMs: 5000
   },
-  hardRecovery: {
-    enabled: true,
-    desktopSettleMs: 90_000,
-    matrixReadyTimeoutMs: 180_000,
-    matrixReadyRetryDelayMs: 5_000,
+  vrStackStartup: {
     steamReadyTimeoutMs: 90_000,
     steamVrReadyTimeoutMs: 90_000,
     oyasumiReadyTimeoutMs: 60_000,
     vrChatJoinTimeoutMs: 120_000,
     retryDelayMs: 10_000,
     maxLaunchAttempts: 2
+  },
+  hardRecovery: {
+    enabled: true,
+    desktopSettleMs: 90_000,
+    matrixReadyTimeoutMs: 180_000,
+    matrixReadyRetryDelayMs: 5_000
   },
   updater: {
     enabled: true,

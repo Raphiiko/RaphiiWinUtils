@@ -226,19 +226,19 @@ export class VrChatRecoveryService {
     await this.setStatus({
       operationId,
       action,
-      phase: action === "start" ? "starting" : "soft-recovering"
+      phase: action === "start" ? "starting" : "soft-recovering",
+      instanceId: undefined,
+      reason: undefined,
+      attempt: undefined,
+      bootMarker: undefined
     });
     const instanceId = action === "soft-recover" ? await this.captureLastInstanceId() : undefined;
+    await this.setStatus({ instanceId });
     try {
       await this.stopVrStack();
-      await this.startVrStack(instanceId);
+      const rejoined = await this.startVrStack(instanceId);
       await this.setStatus({
-        phase: instanceId ? "completed" : "completed-with-warning",
-        reason: instanceId
-          ? undefined
-          : action === "soft-recover"
-            ? "No previous VRChat instance was found; launched normally"
-            : undefined,
+        ...completionStatus(instanceId, rejoined, action),
         instanceId
       });
     } catch (error) {
@@ -272,10 +272,8 @@ export class VrChatRecoveryService {
     try {
       await this.dependencies.sleep(this.config.hardRecovery.desktopSettleMs);
       await this.waitForMatrix();
-      await this.ensureSteamReady();
-      await this.startSteamVrWithRetry();
-      await this.startOyasumiWithRetry();
-      await this.startVrChatAndVerifyRejoin();
+      const rejoined = await this.startVrStack(this.status.instanceId);
+      await this.setStatus(completionStatus(this.status.instanceId, rejoined, "hard-recover"));
     } catch (error) {
       await this.fail(formatError(error));
       this.log.error("Hard recovery stopped and needs attention", {
@@ -302,8 +300,8 @@ export class VrChatRecoveryService {
     }
     const ready = await this.waitFor(
       () => this.isRunning("steam"),
-      this.config.hardRecovery.steamReadyTimeoutMs,
-      this.config.hardRecovery.retryDelayMs
+      this.config.vrStackStartup.steamReadyTimeoutMs,
+      this.config.vrStackStartup.retryDelayMs
     );
     if (!ready) throw new Error("Steam did not become ready in time");
   }
@@ -319,7 +317,7 @@ export class VrChatRecoveryService {
         ),
       async () => (await this.isRunning("vrmonitor")) && (await this.isRunning("vrserver")),
       async () => this.dependencies.stopProcesses(["vrmonitor", "vrserver"]),
-      this.config.hardRecovery.steamVrReadyTimeoutMs
+      this.config.vrStackStartup.steamVrReadyTimeoutMs
     );
     if (!ready) throw new Error("SteamVR did not become ready in time");
   }
@@ -336,13 +334,14 @@ export class VrChatRecoveryService {
         ),
       async () => this.isRunning("oyasumivr"),
       async () => this.dependencies.stopProcesses(["OyasumiVR"]),
-      this.config.hardRecovery.oyasumiReadyTimeoutMs
+      this.config.vrStackStartup.oyasumiReadyTimeoutMs
     );
     if (!ready) throw new Error("OyasumiVR did not become ready in time");
   }
 
-  private async startVrChatAndVerifyRejoin(): Promise<void> {
-    const instanceId = this.status.instanceId;
+  private async startVrChatAndVerifyRejoin(
+    instanceId: string | undefined
+  ): Promise<boolean | undefined> {
     await this.setStatus({ phase: "launching-vrchat" });
     const args = instanceId ? [toVrChatLaunchUrl(instanceId)] : undefined;
     const launchStartedAtMs = this.dependencies.now().getTime();
@@ -354,51 +353,25 @@ export class VrChatRecoveryService {
 
     const started = await this.waitFor(
       () => this.isRunning("vrchat"),
-      this.config.hardRecovery.vrChatJoinTimeoutMs,
-      this.config.hardRecovery.retryDelayMs
+      this.config.vrStackStartup.vrChatJoinTimeoutMs,
+      this.config.vrStackStartup.retryDelayMs
     );
     if (!started) throw new Error("VRChat did not start in time");
-    if (!instanceId) {
-      await this.setStatus({
-        phase: "completed-with-warning",
-        reason: "No previous VRChat instance was found; launched normally"
-      });
-      return;
-    }
+    if (!instanceId) return undefined;
 
     await this.setStatus({ phase: "verifying-rejoin" });
-    const joined = await this.waitFor(
+    return this.waitFor(
       () => this.dependencies.hasJoinedInstanceSince(instanceId, launchStartedAtMs),
-      this.config.hardRecovery.vrChatJoinTimeoutMs,
-      this.config.hardRecovery.retryDelayMs
-    );
-    await this.setStatus(
-      joined
-        ? { phase: "completed" }
-        : {
-            phase: "completed-with-warning",
-            reason: "VRChat started but the requested instance rejoin was not observed"
-          }
+      this.config.vrStackStartup.vrChatJoinTimeoutMs,
+      this.config.vrStackStartup.retryDelayMs
     );
   }
 
-  private async startVrStack(instanceId: string | undefined): Promise<void> {
-    await this.dependencies.launchSteamApp(
-      this.config.vrChatRecovery.steamPath,
-      this.config.vrChatRecovery.steamVrAppId
-    );
-    await this.dependencies.sleep(this.config.vrChatRecovery.steamVrStartWaitMs);
-    if (!(await this.isRunning("oyasumivr"))) {
-      await this.dependencies.launchSteamApp(
-        this.config.vrChatRecovery.steamPath,
-        this.config.vrChatRecovery.oyasumiVrAppId
-      );
-    }
-    await this.dependencies.launchSteamApp(
-      this.config.vrChatRecovery.steamPath,
-      this.config.vrChatRecovery.vrChatAppId,
-      instanceId ? [toVrChatLaunchUrl(instanceId)] : undefined
-    );
+  private async startVrStack(instanceId: string | undefined): Promise<boolean | undefined> {
+    await this.ensureSteamReady();
+    await this.startSteamVrWithRetry();
+    await this.startOyasumiWithRetry();
+    return this.startVrChatAndVerifyRejoin(instanceId);
   }
 
   private async stopVrStack(): Promise<void> {
@@ -418,15 +391,15 @@ export class VrChatRecoveryService {
     cleanup: () => Promise<void>,
     timeoutMs: number
   ): Promise<boolean> {
-    for (let attempt = 1; attempt <= this.config.hardRecovery.maxLaunchAttempts; attempt += 1) {
+    for (let attempt = 1; attempt <= this.config.vrStackStartup.maxLaunchAttempts; attempt += 1) {
       await this.setStatus({ attempt });
       await launch();
-      if (await this.waitFor(isReady, timeoutMs, this.config.hardRecovery.retryDelayMs))
+      if (await this.waitFor(isReady, timeoutMs, this.config.vrStackStartup.retryDelayMs))
         return true;
-      if (attempt < this.config.hardRecovery.maxLaunchAttempts) {
+      if (attempt < this.config.vrStackStartup.maxLaunchAttempts) {
         this.log.warn(`${stage} launch attempt failed; retrying`, { attempt });
         await cleanup();
-        await this.dependencies.sleep(this.config.hardRecovery.retryDelayMs);
+        await this.dependencies.sleep(this.config.vrStackStartup.retryDelayMs);
       }
     }
     return false;
@@ -505,6 +478,28 @@ export class VrChatRecoveryService {
     for (const listener of this.statusListeners) listener(this.status);
     this.log.info("VR recovery status changed", this.status);
   }
+}
+
+function completionStatus(
+  instanceId: string | undefined,
+  rejoined: boolean | undefined,
+  action: VrRecoveryAction
+): Pick<VrRecoveryStatus, "phase" | "reason"> {
+  if (!instanceId) {
+    return {
+      phase: "completed-with-warning",
+      reason:
+        action === "soft-recover" || action === "hard-recover"
+          ? "No previous VRChat instance was found; launched normally"
+          : undefined
+    };
+  }
+  return rejoined
+    ? { phase: "completed", reason: undefined }
+    : {
+        phase: "completed-with-warning",
+        reason: "VRChat started but the requested instance rejoin was not observed"
+      };
 }
 
 function isActiveHardRecoveryPhase(phase: VrRecoveryPhase): boolean {
