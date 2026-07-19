@@ -37,7 +37,7 @@ export async function stopProcesses(processNames: string[]): Promise<void> {
       "-NoProfile",
       "-NonInteractive",
       "-Command",
-      `Stop-Process -Name @(${names}) -Force -ErrorAction SilentlyContinue`
+      `Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -in @(${names}) } | Stop-Process -Force -ErrorAction Stop`
     ],
     { timeoutMs: 10_000 }
   );
