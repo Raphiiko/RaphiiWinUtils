@@ -134,6 +134,7 @@ void test("publishes VR recovery buttons and routes their presses through the sh
   await waitFor(() =>
     client.published.some((message) => message.topic.endsWith("steamvr_soft_recovery/config"))
   );
+  assert.equal(client.subscriptions.has("raphiiwinutils/shirakami/vr/recovery/hard/set"), true);
 
   const recoveryButton = client.published.find((message) =>
     message.topic.endsWith("steamvr_soft_recovery/config")
@@ -239,6 +240,7 @@ class MemoryStateStore implements AudioMqttStateStore {
 class FakeMqttClient {
   connected = true;
   readonly published: Array<{ topic: string; payload: string; retain: boolean }> = [];
+  readonly subscriptions = new Set<string>();
   private readonly listeners = new Map<string, Array<(...args: never[]) => void>>();
 
   on(event: string, listener: (...args: never[]) => void): this {
@@ -246,7 +248,8 @@ class FakeMqttClient {
     return this;
   }
 
-  subscribe(_topic: string, _options: unknown, callback: (error?: Error) => void): this {
+  subscribe(topic: string, _options: unknown, callback: (error?: Error) => void): this {
+    this.subscriptions.add(topic);
     callback();
     return this;
   }

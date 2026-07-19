@@ -159,6 +159,7 @@ export class MqttAudioSyncService implements AudioModePublisher {
     await Promise.all(
       vrRecoveryButtons.map((button) => this.subscribe(this.topic(button.commandTopicSuffix)))
     );
+    await this.subscribe(this.topic("vr/recovery/hard/set"));
     await this.subscribe(this.topic("vr/recovery/hard/resume/set"));
     await this.subscribe(this.topic("vr/recovery/hard/cancel/set"));
     await Promise.all(
