@@ -25,10 +25,10 @@ void test("soft recovery serializes VR stack launch and restores the last instan
     "sleep:5000",
     "probe:steam",
     "probe:steam",
+    "probe:oyasumivr",
     "launch:250820",
     "probe:vrmonitor",
     "probe:vrserver",
-    "probe:oyasumivr",
     "launch:438100:vrchat://launch?ref=vrchat.com&id=wrld_12345678-1234-1234-1234-123456789abc:42~region(eu)",
     "probe:vrchat"
   ]);
@@ -76,11 +76,11 @@ void test("start waits for each VR stack dependency before launching its depende
     "probe:steam",
     "launch-steam",
     "probe:steam",
+    "probe:oyasumivr",
     "launch:250820",
+    "launch:2538150",
     "probe:vrmonitor",
     "probe:vrserver",
-    "probe:oyasumivr",
-    "launch:2538150",
     "probe:oyasumivr",
     "sleep:0",
     "probe:oyasumivr",
@@ -89,7 +89,7 @@ void test("start waits for each VR stack dependency before launching its depende
   ]);
 });
 
-void test("start does not launch VRChat when OyasumiVR never becomes ready", async () => {
+void test("start launches VRChat after SteamVR even when OyasumiVR never becomes ready", async () => {
   const events: string[] = [];
   const running = new Set<string>();
   const config = testConfig();
@@ -110,6 +110,7 @@ void test("start does not launch VRChat when OyasumiVR never becomes ready", asy
           running.add("vrmonitor");
           running.add("vrserver");
         }
+        if (appId === "438100") running.add("vrchat");
         return Promise.resolve();
       }
     })
@@ -117,7 +118,7 @@ void test("start does not launch VRChat when OyasumiVR never becomes ready", asy
 
   assert.equal((await service.startVrChat()).accepted, false);
   assert.equal(events.includes("launch:2538150"), true);
-  assert.equal(events.includes("launch:438100"), false);
+  assert.equal(events.includes("launch:438100"), true);
 });
 
 void test("a pending hard recovery blocks soft recovery until the matching resume completes", async () => {

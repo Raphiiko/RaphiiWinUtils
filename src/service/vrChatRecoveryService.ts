@@ -369,9 +369,15 @@ export class VrChatRecoveryService {
 
   private async startVrStack(instanceId: string | undefined): Promise<boolean | undefined> {
     await this.ensureSteamReady();
-    await this.startSteamVrWithRetry();
-    await this.startOyasumiWithRetry();
-    return this.startVrChatAndVerifyRejoin(instanceId);
+    const steamVr = this.startSteamVrWithRetry();
+    const oyasumi = this.startOyasumiWithRetry()
+      .then((): undefined => undefined)
+      .catch((error: unknown): unknown => error);
+    await steamVr;
+    const rejoined = await this.startVrChatAndVerifyRejoin(instanceId);
+    const oyasumiError = await oyasumi;
+    if (oyasumiError) throw asError(oyasumiError);
+    return rejoined;
   }
 
   private async stopVrStack(): Promise<void> {
@@ -656,5 +662,10 @@ export function toVrChatLaunchUrl(instanceId: string): string {
 }
 
 function formatError(error: unknown): string {
-  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  const normalized = asError(error);
+  return `${normalized.name}: ${normalized.message}`;
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
