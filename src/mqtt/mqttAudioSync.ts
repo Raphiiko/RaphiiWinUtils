@@ -335,6 +335,8 @@ export class MqttAudioSyncService implements AudioModePublisher {
       true
     );
     await this.publishVrRecoveryDiscovery(prefix, deviceId, availability, device);
+    // Remove the superseded discovery entity retained by pre-hard-recovery builds.
+    await this.publish(`${prefix}/button/${deviceId}/recover_vrchat/config`, "", true);
     await Promise.all(
       this.channels.configuredChannelNames().map((channel) =>
         this.publish(
