@@ -398,7 +398,9 @@ export class MqttAudioSyncService implements AudioModePublisher {
         state_topic: this.topic("vr/recovery/status"),
         value_template: "{{ value_json.phase }}",
         json_attributes_topic: this.topic("vr/recovery/status"),
-        availability,
+        // The retained status is owned by Home Assistant during a hard recovery.
+        // RWU being offline is expected while Windows reboots, so it must not
+        // mark the owner's recovery state unavailable.
         device
       }),
       true

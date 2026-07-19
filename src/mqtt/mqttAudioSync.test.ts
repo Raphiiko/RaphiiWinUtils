@@ -160,6 +160,15 @@ void test("publishes VR recovery buttons and routes their presses through the sh
     }
   });
 
+  const recoveryStatus = JSON.parse(
+    client.published.find((message) => message.topic.endsWith("vr_recovery_status/config"))?.payload ?? "{}"
+  ) as Record<string, unknown>;
+  assert.equal(
+    recoveryStatus.availability,
+    undefined,
+    "the owner-facing recovery status must remain readable while RWU is offline"
+  );
+
   client.emit("message", "raphiiwinutils/shirakami/vr/recovery/soft/set", Buffer.from("PRESS"), {
     retain: false
   });
