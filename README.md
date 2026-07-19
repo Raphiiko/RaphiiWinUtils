@@ -79,6 +79,21 @@ POST http://127.0.0.1:17642/audio/volumes/:name
 The `POST /update/check` route queues one self-update check. If a check is already running it returns `409` and leaves the running check alone.
 The volume endpoint expects `{ "volumePercent": 0..100 }` and remains localhost-only.
 
+## Home Assistant VRChat Recovery
+
+When MQTT is enabled, the discovered **Shirakami** device also exposes two buttons:
+
+- **Recover VRChat** stops a running `VRChat.exe`, remembers the last instance from VRChat's newest
+  `output_log_*.txt`, restarts SteamVR, and relaunches VRChat into that instance when one was found.
+- **Start VRChat** performs the same clean restart but launches into the normal VRChat home world.
+
+The actions are process-wide serialized: a second button press while either action is running is
+ignored. SteamVR is launched through Steam app `250820`, and VRChat through app `438100`; VRChat is
+started without `--no-vr`, so it uses the active SteamVR runtime. Configure timings or a non-default
+Steam location under `vrChatRecovery` in `%APPDATA%\RaphiiWinUtils\config.json`.
+Because VRChat is launched through Steam rather than directly through `VRChat.exe`, any VRChat launch
+options configured in Steam (such as CPU-affinity settings) continue to apply.
+
 ## Home Assistant Audio Control
 
 Home Assistant can be the durable control plane for audio modes and the System, Browser, Voice,
@@ -115,6 +130,10 @@ and direct Windows virtual-device volume changes are published back to the same 
 
 The MQTT-discovered **Shirakami** device contains the audio-mode select, five volume sliders, and
 availability status. Add those entities to any dashboard; no YAML helpers or REST token are needed.
+
+Its VRChat controls restart SteamVR and launch VRChat (or recover the most recently joined instance).
+They also launch OyasumiVR through Steam app `2538150` unless its `OyasumiVR.exe` process is already
+running. Configure the Steam app IDs and launch delays under `vrChatRecovery`.
 
 ## Audio Mode Volume Policies
 

@@ -77,6 +77,110 @@ void test("publishes discovery and only confirms an MQTT mode after the local co
   service.stop();
 });
 
+void test("publishes VRChat buttons and routes their presses to the recovery service", async () => {
+  const client = new FakeMqttClient();
+  let recoverCalls = 0;
+  let startCalls = 0;
+  const service = new MqttAudioSyncService(
+    { ...defaultConfig.mqtt, enabled: true, password: "test-password" },
+    { listModes: () => [speaker], applyMode: () => Promise.resolve(speaker) },
+    createChannels() as unknown as ChannelVolumeService,
+    logger,
+    { connect: () => client as unknown as MqttClient, stateStore: new MemoryStateStore() },
+    {
+      recoverLastInstance: () => {
+        recoverCalls += 1;
+        return Promise.resolve({ accepted: true });
+      },
+      startVrChat: () => {
+        startCalls += 1;
+        return Promise.resolve({ accepted: true });
+      }
+    }
+  );
+
+  service.start();
+  await waitFor(() => client.hasListener("connect"));
+  client.emit("connect");
+  await waitFor(() =>
+    client.published.some((message) => message.topic.endsWith("recover_vrchat/config"))
+  );
+
+  const recoveryButton = client.published.find((message) =>
+    message.topic.endsWith("recover_vrchat/config")
+  );
+  assert.deepEqual(JSON.parse(recoveryButton?.payload ?? "{}"), {
+    name: "Recover VRChat",
+    unique_id: "raphiiwinutils_shirakami_recover_vrchat",
+    object_id: "shirakami_recover_vrchat",
+    command_topic: "raphiiwinutils/shirakami/vrchat/recover-last-instance/set",
+    payload_press: "PRESS",
+    retain: true,
+    qos: 1,
+    availability: {
+      topic: "raphiiwinutils/shirakami/availability",
+      payload_available: "online",
+      payload_not_available: "offline"
+    },
+    device: {
+      identifiers: ["raphiiwinutils_shirakami"],
+      name: "Shirakami",
+      manufacturer: "Raphiiko",
+      model: "RaphiiWinUtils"
+    }
+  });
+
+  client.emit(
+    "message",
+    "raphiiwinutils/shirakami/vrchat/recover-last-instance/set",
+    Buffer.from("PRESS"),
+    { retain: false }
+  );
+  client.emit(
+    "message",
+    "raphiiwinutils/shirakami/vrchat/start/set",
+    Buffer.from("PRESS"),
+    { retain: false }
+  );
+  await waitFor(() => recoverCalls === 1 && startCalls === 1);
+  service.stop();
+});
+
+void test("does not replay retained MQTT VRChat button presses", async () => {
+  const client = new FakeMqttClient();
+  let recoverCalls = 0;
+  const service = new MqttAudioSyncService(
+    { ...defaultConfig.mqtt, enabled: true, password: "test-password" },
+    { listModes: () => [speaker], applyMode: () => Promise.resolve(speaker) },
+    createChannels() as unknown as ChannelVolumeService,
+    logger,
+    { connect: () => client as unknown as MqttClient, stateStore: new MemoryStateStore() },
+    {
+      recoverLastInstance: () => {
+        recoverCalls += 1;
+        return Promise.resolve({ accepted: true });
+      },
+      startVrChat: () => Promise.resolve({ accepted: true })
+    }
+  );
+
+  service.start();
+  await waitFor(() => client.hasListener("connect"));
+  client.emit("connect");
+  await waitFor(() => client.hasListener("message"));
+
+  client.emit(
+    "message",
+    "raphiiwinutils/shirakami/vrchat/recover-last-instance/set",
+    Buffer.from("PRESS"),
+    { retain: true }
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(recoverCalls, 0);
+  service.stop();
+});
+
 function createChannels(): object {
   return {
     onStateChange: () => () => {},

@@ -134,6 +134,16 @@
     "steamPath": "C:\\Program Files (x86)\\Steam\\steam.exe",
     "steamAppId": "1173510"
   },
+  "vrChatRecovery": {
+    "enabled": true,
+    "steamPath": "C:\\Program Files (x86)\\Steam\\steam.exe",
+    "steamVrAppId": "250820",
+    "oyasumiVrAppId": "2538150",
+    "vrChatAppId": "438100",
+    "vrChatExitWaitMs": 3000,
+    "steamVrExitWaitMs": 5000,
+    "steamVrStartWaitMs": 5000
+  },
   "updater": {
     "enabled": true,
     "repoUrl": "https://github.com/Raphiiko/RaphiiWinUtils.git",

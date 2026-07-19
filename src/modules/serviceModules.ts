@@ -6,6 +6,7 @@ import { ChannelVolumeService } from "../service/channelVolumeService.ts";
 import { ControlServer } from "../service/controlServer.ts";
 import { Updater } from "../service/updater.ts";
 import { XsOverlayRecoveryService } from "../service/xsOverlayRecoveryService.ts";
+import { VrChatRecoveryService } from "../service/vrChatRecoveryService.ts";
 import { Logger } from "../system/logger.ts";
 import type { Notifier } from "../system/notify.ts";
 import type { AppModule } from "./appModule.ts";
@@ -26,11 +27,14 @@ export function createServiceModules(
         channelVolumeService.policiesThatNeedApply(policies)
     }
   );
+  const vrChatRecoveryService = new VrChatRecoveryService(config.vrChatRecovery, logger);
   const mqttAudioSync = new MqttAudioSyncService(
     config.mqtt,
     audioModeService,
     channelVolumeService,
-    logger
+    logger,
+    {},
+    vrChatRecoveryService
   );
   audioModeService.setPublisher(mqttAudioSync);
   const controlServer = new ControlServer(
