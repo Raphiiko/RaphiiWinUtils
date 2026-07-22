@@ -54,6 +54,30 @@ export async function runCommand(
   });
 }
 
+// Launch a long-lived process (e.g. steam.exe, which stays resident and never
+// exits) and resolve once it has spawned. Unlike runCommand, this does NOT wait
+// for exit — awaiting exit on a resident GUI process always times out. Readiness
+// is polled separately by the caller.
+export async function launchDetached(
+  command: string,
+  args: string[],
+  options: { cwd?: string; windowsHide?: boolean } = {}
+): Promise<void> {
+  return await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      windowsHide: options.windowsHide ?? true,
+      detached: true,
+      stdio: "ignore"
+    });
+    child.once("spawn", () => {
+      child.unref();
+      resolve();
+    });
+    child.once("error", reject);
+  });
+}
+
 export async function requireSuccess(
   command: string,
   args: string[],

@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import type { AppConfig } from "../config/schema.ts";
 import { VbanTextClient } from "../matrix/vbanTextClient.ts";
 import { Logger } from "../system/logger.ts";
-import { requireSuccess, runCommand } from "../system/process.ts";
+import { launchDetached, requireSuccess, runCommand } from "../system/process.ts";
 import { getRunningProcessNames, stopProcesses } from "../system/runningProcesses.ts";
 
 export type VrRecoveryAction = "start" | "soft-recover" | "hard-recover";
@@ -518,7 +518,9 @@ function createDefaultDependencies(config: AppConfig, logger: Logger): VrChatRec
     getRunningProcessNames,
     stopProcesses,
     launchSteamClient: async (steamPath) => {
-      await requireSuccess(steamPath, [], { timeoutMs: 15_000 });
+      // steam.exe stays resident, so don't await exit — just launch it and let
+      // ensureSteamReady's isRunning("steam") poll be the readiness gate.
+      await launchDetached(steamPath, []);
     },
     launchSteamApp: async (steamPath, appId, args = []) => {
       await requireSuccess(steamPath, ["-applaunch", appId, ...args], { timeoutMs: 15_000 });
