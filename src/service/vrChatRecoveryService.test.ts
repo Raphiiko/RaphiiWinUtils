@@ -78,8 +78,8 @@ void test("start waits for each VR stack dependency before launching its depende
     "probe:steam",
     "probe:oyasumivr",
     "launch:250820",
-    "launch:2538150",
     "probe:vrmonitor",
+    "launch:2538150",
     "probe:vrserver",
     "probe:oyasumivr",
     "sleep:0",
@@ -121,7 +121,7 @@ void test("start launches VRChat after SteamVR even when OyasumiVR never becomes
   assert.equal(events.includes("launch:438100"), true);
 });
 
-void test("a pending hard recovery blocks soft recovery until the matching resume completes", async () => {
+void test("a new soft recovery supersedes a pending hard recovery before the matching resume", async () => {
   const events: string[] = [];
   let saved: VrRecoveryStatus | undefined;
   const first = new VrChatRecoveryService(
@@ -142,7 +142,7 @@ void test("a pending hard recovery blocks soft recovery until the matching resum
   const request = await first.hardRecover();
   assert.equal(request.accepted, true);
   await waitFor(() => first.getStatus().phase === "reboot-commanded");
-  assert.equal((await first.startVrChat()).accepted, false);
+  assert.equal((await first.startVrChat()).accepted, true);
 
   const resumed = new VrChatRecoveryService(
     testConfig(),

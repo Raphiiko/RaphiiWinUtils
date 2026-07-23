@@ -60,6 +60,14 @@ export interface VrChatRecoveryDependencies {
   getBootMarker(): Promise<string>;
 }
 
+interface RecoveryOperation {
+  operationId: string;
+  action: VrRecoveryAction;
+  controller: AbortController;
+  watchdog?: ReturnType<typeof setTimeout>;
+  running?: Promise<void>;
+}
+
 /**
  * The one local gate for every VR start/recovery path. Hard recovery is also
  * journaled so a reboot cannot leave the next process instance guessing.
@@ -69,7 +77,7 @@ export class VrChatRecoveryService {
   private readonly dependencies: VrChatRecoveryDependencies;
   private readonly log: Logger;
   private status: VrRecoveryStatus = { phase: "idle", updatedAt: new Date(0).toISOString() };
-  private running?: Promise<void>;
+  private active?: RecoveryOperation;
   private readonly statusListeners = new Set<(status: VrRecoveryStatus) => void>();
 
   constructor(
@@ -109,6 +117,8 @@ export class VrChatRecoveryService {
       } else {
         await this.fail("RaphiiWinUtils restarted without observing the requested Windows reboot");
       }
+      if (this.status.phase === "awaiting-rwu-after-boot" && saved.operationId)
+        this.beginOperation(saved.operationId, "hard-recover");
       this.log.warn("Hard recovery is awaiting Home Assistant resume", {
         operationId: saved.operationId,
         previousPhase: saved.phase
@@ -129,12 +139,12 @@ export class VrChatRecoveryService {
     return this.status;
   }
 
-  startVrChat(): Promise<VrChatRecoveryRequestResult> {
-    return this.requestLocal("start");
+  startVrChat(operationId?: string): Promise<VrChatRecoveryRequestResult> {
+    return this.requestLocal("start", operationId);
   }
 
-  recoverLastInstance(): Promise<VrChatRecoveryRequestResult> {
-    return this.requestLocal("soft-recover");
+  recoverLastInstance(operationId?: string): Promise<VrChatRecoveryRequestResult> {
+    return this.requestLocal("soft-recover", operationId);
   }
 
   hardRecover(
@@ -144,14 +154,10 @@ export class VrChatRecoveryService {
     if (!this.config.hardRecovery.enabled) {
       return Promise.resolve({ accepted: false, reason: "hard recovery is disabled" });
     }
-    if (this.status.operationId === operationId)
+    if (this.isSameOperation(operationId))
       return Promise.resolve({ accepted: true, operationId });
-    if (this.isBusy()) return Promise.resolve(this.rejectedBusyResult());
-    const operation = this.runHardRecoveryPreparation(operationId, beforeReboot);
-    this.running = operation;
-    void operation.finally(() => {
-      if (this.running === operation) this.running = undefined;
-    });
+    const recovery = this.beginOperation(operationId, "hard-recover");
+    this.run(recovery, () => this.runHardRecoveryPreparation(recovery, beforeReboot));
     return Promise.resolve({ accepted: true, operationId });
   }
 
@@ -168,61 +174,53 @@ export class VrChatRecoveryService {
         reason: `recovery is not awaiting resume (${this.status.phase})`
       });
     }
-    if (this.running) return Promise.resolve(this.rejectedBusyResult());
-
-    const operation = this.runHardRecoveryResume(operationId);
-    this.running = operation;
-    void operation.finally(() => {
-      if (this.running === operation) this.running = undefined;
-    });
+    if (!this.active) this.restoreOperation(operationId, "hard-recover");
+    const recovery = this.active;
+    if (!recovery || recovery.operationId !== operationId)
+      return Promise.resolve({ accepted: false, reason: "recovery is already active" });
+    if (recovery.running) return Promise.resolve(this.rejectedBusyResult());
+    this.run(recovery, () => this.runHardRecoveryResume(recovery));
     return Promise.resolve({ accepted: true, operationId });
   }
 
-  async cancelHardRecovery(
-    operationId: string,
-    reason: string
-  ): Promise<VrChatRecoveryRequestResult> {
-    if (
-      !operationId ||
-      operationId !== this.status.operationId ||
-      this.status.action !== "hard-recover"
-    ) {
-      return { accepted: false, reason: "operation ID does not match the pending recovery" };
+  cancel(operationId?: string, reason?: string): Promise<VrChatRecoveryRequestResult> {
+    if (operationId && operationId !== this.active?.operationId) {
+      return Promise.resolve({ accepted: false, reason: "operation ID does not match the running recovery" });
     }
-    if (this.running)
-      return { accepted: false, reason: "cannot cancel while a local recovery stage is running" };
-    if (!isActiveHardRecoveryPhase(this.status.phase)) {
-      return { accepted: false, reason: `recovery is already terminal (${this.status.phase})` };
-    }
-    await this.fail(reason || "Cancelled by the recovery owner");
-    return { accepted: true, operationId };
+    const cancelledOperationId = this.active?.operationId;
+    this.abortActive();
+    return this.setStatus({
+      phase: reason ? "failed-needs-attention" : "idle",
+      reason: reason || undefined
+    }).then(() => ({ accepted: true, operationId: cancelledOperationId }));
+  }
+
+  cancelHardRecovery(operationId: string, reason: string): Promise<VrChatRecoveryRequestResult> {
+    return this.cancel(operationId, reason);
   }
 
   private async requestLocal(
-    action: "start" | "soft-recover"
+    action: "start" | "soft-recover",
+    operationId = this.dependencies.createOperationId()
   ): Promise<VrChatRecoveryRequestResult> {
     if (!this.config.vrChatRecovery.enabled) {
       return { accepted: false, reason: "VR recovery is disabled" };
     }
-    if (this.isBusy()) return this.rejectedBusyResult();
-
-    const operationId = this.dependencies.createOperationId();
-    const operation = this.runLocalRecovery(action, operationId);
-    this.running = operation;
+    if (this.isSameOperation(operationId)) return { accepted: true, operationId };
+    const recovery = this.beginOperation(operationId, action);
+    const running = this.run(recovery, () => this.runLocalRecovery(recovery));
     try {
-      await operation;
-      return { accepted: true, operationId };
+      await running;
+      return recovery.controller.signal.aborted
+        ? { accepted: false, operationId, reason: "recovery was superseded or cancelled" }
+        : { accepted: true, operationId };
     } catch (error) {
       return { accepted: false, operationId, reason: formatError(error) };
-    } finally {
-      if (this.running === operation) this.running = undefined;
     }
   }
 
-  private async runLocalRecovery(
-    action: "start" | "soft-recover",
-    operationId: string
-  ): Promise<void> {
+  private async runLocalRecovery(recovery: RecoveryOperation): Promise<void> {
+    const { action, operationId } = recovery;
     await this.setStatus({
       operationId,
       action,
@@ -231,51 +229,60 @@ export class VrChatRecoveryService {
       reason: undefined,
       attempt: undefined,
       bootMarker: undefined
-    });
-    const instanceId = action === "soft-recover" ? await this.captureLastInstanceId() : undefined;
-    await this.setStatus({ instanceId });
+    }, recovery);
+    this.throwIfAborted(recovery);
+    const instanceId =
+      action === "soft-recover" ? await this.captureLastInstanceId(recovery) : undefined;
+    await this.setStatus({ instanceId }, recovery);
     try {
-      await this.stopVrStack();
-      const rejoined = await this.startVrStack(instanceId);
+      await this.stopVrStack(recovery);
+      const rejoined = await this.startVrStack(recovery, instanceId);
       await this.setStatus({
         ...completionStatus(instanceId, rejoined, action),
         instanceId
-      });
+      }, recovery);
     } catch (error) {
-      await this.fail(formatError(error));
+      if (isAbortError(error)) return;
+      await this.fail(formatError(error), recovery);
       throw error;
     }
   }
 
   private async runHardRecoveryPreparation(
-    operationId: string,
+    recovery: RecoveryOperation,
     beforeReboot?: () => Promise<void>
   ): Promise<void> {
-    await this.setStatus({ operationId, action: "hard-recover", phase: "preparing" });
-    const instanceId = await this.captureLastInstanceId();
-    await this.setStatus({ instanceId });
+    const { operationId } = recovery;
+    await this.setStatus({ operationId, action: "hard-recover", phase: "preparing" }, recovery);
+    const instanceId = await this.captureLastInstanceId(recovery);
+    await this.setStatus({ instanceId }, recovery);
     try {
-      await this.stopVrStack();
+      await this.stopVrStack(recovery);
       await this.setStatus({
         phase: "reboot-commanded",
-        bootMarker: await this.dependencies.getBootMarker()
-      });
-      await beforeReboot?.();
+        bootMarker: await this.awaitExternal(this.dependencies.getBootMarker(), recovery)
+      }, recovery);
+      this.throwIfAborted(recovery);
+      if (beforeReboot) await this.awaitExternal(beforeReboot(), recovery);
+      this.throwIfAborted(recovery);
       this.log.warn("Requesting forced Windows reboot for hard recovery", { operationId });
-      await this.dependencies.requestReboot();
+      await this.awaitExternal(this.dependencies.requestReboot(), recovery);
     } catch (error) {
-      await this.fail(formatError(error));
+      if (isAbortError(error)) return;
+      await this.fail(formatError(error), recovery);
     }
   }
 
-  private async runHardRecoveryResume(operationId: string): Promise<void> {
+  private async runHardRecoveryResume(recovery: RecoveryOperation): Promise<void> {
+    const { operationId } = recovery;
     try {
-      await this.dependencies.sleep(this.config.hardRecovery.desktopSettleMs);
-      await this.waitForMatrix();
-      const rejoined = await this.startVrStack(this.status.instanceId);
-      await this.setStatus(completionStatus(this.status.instanceId, rejoined, "hard-recover"));
+      await this.sleep(this.config.hardRecovery.desktopSettleMs, recovery);
+      await this.waitForMatrix(recovery);
+      const rejoined = await this.startVrStack(recovery, this.status.instanceId);
+      await this.setStatus(completionStatus(this.status.instanceId, rejoined, "hard-recover"), recovery);
     } catch (error) {
-      await this.fail(formatError(error));
+      if (isAbortError(error)) return;
+      await this.fail(formatError(error), recovery);
       this.log.error("Hard recovery stopped and needs attention", {
         operationId,
         error: formatError(error)
@@ -283,110 +290,138 @@ export class VrChatRecoveryService {
     }
   }
 
-  private async waitForMatrix(): Promise<void> {
-    await this.setStatus({ phase: "waiting-for-matrix" });
+  private async waitForMatrix(recovery: RecoveryOperation): Promise<void> {
+    await this.setStatus({ phase: "waiting-for-matrix" }, recovery);
     const ready = await this.waitFor(
       () => this.dependencies.isMatrixReady(),
       this.config.hardRecovery.matrixReadyTimeoutMs,
-      this.config.hardRecovery.matrixReadyRetryDelayMs
+      this.config.hardRecovery.matrixReadyRetryDelayMs,
+      recovery
     );
     if (!ready) throw new Error("Matrix Coconut did not answer a VBAN-TEXT health query in time");
   }
 
-  private async ensureSteamReady(): Promise<void> {
-    await this.setStatus({ phase: "waiting-for-steam" });
-    if (!(await this.isRunning("steam"))) {
-      await this.dependencies.launchSteamClient(this.config.vrChatRecovery.steamPath);
+  private async ensureSteamReady(recovery: RecoveryOperation): Promise<void> {
+    await this.setStatus({ phase: "waiting-for-steam" }, recovery);
+    if (!(await this.isRunning("steam", recovery))) {
+      await this.awaitExternal(
+        this.dependencies.launchSteamClient(this.config.vrChatRecovery.steamPath),
+        recovery
+      );
     }
     const ready = await this.waitFor(
-      () => this.isRunning("steam"),
+      () => this.isRunning("steam", recovery),
       this.config.vrStackStartup.steamReadyTimeoutMs,
-      this.config.vrStackStartup.retryDelayMs
+      this.config.vrStackStartup.retryDelayMs,
+      recovery
     );
     if (!ready) throw new Error("Steam did not become ready in time");
   }
 
-  private async startSteamVrWithRetry(): Promise<void> {
-    await this.setStatus({ phase: "waiting-for-steamvr" });
+  private async startSteamVrWithRetry(recovery: RecoveryOperation): Promise<void> {
+    await this.setStatus({ phase: "waiting-for-steamvr" }, recovery);
     const ready = await this.launchWithRetry(
       "SteamVR",
       async () =>
-        this.dependencies.launchSteamApp(
-          this.config.vrChatRecovery.steamPath,
-          this.config.vrChatRecovery.steamVrAppId
+        this.awaitExternal(
+          this.dependencies.launchSteamApp(
+            this.config.vrChatRecovery.steamPath,
+            this.config.vrChatRecovery.steamVrAppId
+          ),
+          recovery
         ),
-      async () => (await this.isRunning("vrmonitor")) && (await this.isRunning("vrserver")),
-      async () => this.dependencies.stopProcesses(["vrmonitor", "vrserver"]),
-      this.config.vrStackStartup.steamVrReadyTimeoutMs
+      async () =>
+        (await this.isRunning("vrmonitor", recovery)) &&
+        (await this.isRunning("vrserver", recovery)),
+      async () => this.awaitExternal(this.dependencies.stopProcesses(["vrmonitor", "vrserver"]), recovery),
+      this.config.vrStackStartup.steamVrReadyTimeoutMs,
+      recovery
     );
     if (!ready) throw new Error("SteamVR did not become ready in time");
   }
 
-  private async startOyasumiWithRetry(): Promise<void> {
-    await this.setStatus({ phase: "waiting-for-oyasumi" });
-    if (await this.isRunning("oyasumivr")) return;
+  private async startOyasumiWithRetry(recovery: RecoveryOperation): Promise<void> {
+    await this.setStatus({ phase: "waiting-for-oyasumi" }, recovery);
+    if (await this.isRunning("oyasumivr", recovery)) return;
     const ready = await this.launchWithRetry(
       "OyasumiVR",
       async () =>
-        this.dependencies.launchSteamApp(
-          this.config.vrChatRecovery.steamPath,
-          this.config.vrChatRecovery.oyasumiVrAppId
+        this.awaitExternal(
+          this.dependencies.launchSteamApp(
+            this.config.vrChatRecovery.steamPath,
+            this.config.vrChatRecovery.oyasumiVrAppId
+          ),
+          recovery
         ),
-      async () => this.isRunning("oyasumivr"),
-      async () => this.dependencies.stopProcesses(["OyasumiVR"]),
-      this.config.vrStackStartup.oyasumiReadyTimeoutMs
+      async () => this.isRunning("oyasumivr", recovery),
+      async () => this.awaitExternal(this.dependencies.stopProcesses(["OyasumiVR"]), recovery),
+      this.config.vrStackStartup.oyasumiReadyTimeoutMs,
+      recovery
     );
     if (!ready) throw new Error("OyasumiVR did not become ready in time");
   }
 
   private async startVrChatAndVerifyRejoin(
+    recovery: RecoveryOperation,
     instanceId: string | undefined
   ): Promise<boolean | undefined> {
-    await this.setStatus({ phase: "launching-vrchat" });
+    await this.setStatus({ phase: "launching-vrchat" }, recovery);
     const args = instanceId ? [toVrChatLaunchUrl(instanceId)] : undefined;
     const launchStartedAtMs = this.dependencies.now().getTime();
-    await this.dependencies.launchSteamApp(
-      this.config.vrChatRecovery.steamPath,
-      this.config.vrChatRecovery.vrChatAppId,
-      args
+    await this.awaitExternal(
+      this.dependencies.launchSteamApp(
+        this.config.vrChatRecovery.steamPath,
+        this.config.vrChatRecovery.vrChatAppId,
+        args
+      ),
+      recovery
     );
 
     const started = await this.waitFor(
-      () => this.isRunning("vrchat"),
+      () => this.isRunning("vrchat", recovery),
       this.config.vrStackStartup.vrChatJoinTimeoutMs,
-      this.config.vrStackStartup.retryDelayMs
+      this.config.vrStackStartup.retryDelayMs,
+      recovery
     );
     if (!started) throw new Error("VRChat did not start in time");
     if (!instanceId) return undefined;
 
-    await this.setStatus({ phase: "verifying-rejoin" });
+    await this.setStatus({ phase: "verifying-rejoin" }, recovery);
     return this.waitFor(
       () => this.dependencies.hasJoinedInstanceSince(instanceId, launchStartedAtMs),
       this.config.vrStackStartup.vrChatJoinTimeoutMs,
-      this.config.vrStackStartup.retryDelayMs
+      this.config.vrStackStartup.retryDelayMs,
+      recovery
     );
   }
 
-  private async startVrStack(instanceId: string | undefined): Promise<boolean | undefined> {
-    await this.ensureSteamReady();
-    const steamVr = this.startSteamVrWithRetry();
-    const oyasumi = this.startOyasumiWithRetry()
+  private async startVrStack(
+    recovery: RecoveryOperation,
+    instanceId: string | undefined
+  ): Promise<boolean | undefined> {
+    await this.ensureSteamReady(recovery);
+    const steamVr = this.startSteamVrWithRetry(recovery);
+    const oyasumi = this.startOyasumiWithRetry(recovery)
       .then((): undefined => undefined)
       .catch((error: unknown): unknown => error);
     await steamVr;
-    const rejoined = await this.startVrChatAndVerifyRejoin(instanceId);
+    const rejoined = await this.startVrChatAndVerifyRejoin(recovery, instanceId);
     const oyasumiError = await oyasumi;
     if (oyasumiError) throw asError(oyasumiError);
     return rejoined;
   }
 
-  private async stopVrStack(): Promise<void> {
-    await this.dependencies.stopProcesses(["VRChat", "OyasumiVR", "vrmonitor", "vrserver"]);
-    await this.dependencies.sleep(
+  private async stopVrStack(recovery: RecoveryOperation): Promise<void> {
+    await this.awaitExternal(
+      this.dependencies.stopProcesses(["VRChat", "OyasumiVR", "vrmonitor", "vrserver"]),
+      recovery
+    );
+    await this.sleep(
       Math.max(
         this.config.vrChatRecovery.vrChatExitWaitMs,
         this.config.vrChatRecovery.steamVrExitWaitMs
-      )
+      ),
+      recovery
     );
   }
 
@@ -395,17 +430,19 @@ export class VrChatRecoveryService {
     launch: () => Promise<void>,
     isReady: () => Promise<boolean>,
     cleanup: () => Promise<void>,
-    timeoutMs: number
+    timeoutMs: number,
+    recovery: RecoveryOperation
   ): Promise<boolean> {
     for (let attempt = 1; attempt <= this.config.vrStackStartup.maxLaunchAttempts; attempt += 1) {
-      await this.setStatus({ attempt });
+      this.throwIfAborted(recovery);
+      await this.setStatus({ attempt }, recovery);
       await launch();
-      if (await this.waitFor(isReady, timeoutMs, this.config.vrStackStartup.retryDelayMs))
+      if (await this.waitFor(isReady, timeoutMs, this.config.vrStackStartup.retryDelayMs, recovery))
         return true;
       if (attempt < this.config.vrStackStartup.maxLaunchAttempts) {
         this.log.warn(`${stage} launch attempt failed; retrying`, { attempt });
         await cleanup();
-        await this.dependencies.sleep(this.config.vrStackStartup.retryDelayMs);
+        await this.sleep(this.config.vrStackStartup.retryDelayMs, recovery);
       }
     }
     return false;
@@ -414,23 +451,26 @@ export class VrChatRecoveryService {
   private async waitFor(
     check: () => Promise<boolean>,
     timeoutMs: number,
-    retryDelayMs: number
+    retryDelayMs: number,
+    recovery: RecoveryOperation
   ): Promise<boolean> {
     const deadline = this.dependencies.now().getTime() + timeoutMs;
     while (this.dependencies.now().getTime() <= deadline) {
+      this.throwIfAborted(recovery);
       try {
-        if (await check()) return true;
+        if (await this.awaitExternal(check(), recovery)) return true;
       } catch (error) {
+        if (isAbortError(error)) throw error;
         this.log.warn("Recovery readiness check failed; will retry", { error: formatError(error) });
       }
-      await this.dependencies.sleep(retryDelayMs);
+      await this.sleep(retryDelayMs, recovery);
     }
     return false;
   }
 
-  private async captureLastInstanceId(): Promise<string | undefined> {
+  private async captureLastInstanceId(recovery: RecoveryOperation): Promise<string | undefined> {
     try {
-      const instanceId = await this.dependencies.findLastInstanceId();
+      const instanceId = await this.awaitExternal(this.dependencies.findLastInstanceId(), recovery);
       if (!instanceId)
         this.log.warn("No last VRChat instance found; recovery will launch normally");
       return instanceId;
@@ -442,17 +482,59 @@ export class VrChatRecoveryService {
     }
   }
 
-  private async isRunning(processName: string): Promise<boolean> {
-    return (await this.dependencies.getRunningProcessNames([processName])).has(
+  private async isRunning(processName: string, recovery: RecoveryOperation): Promise<boolean> {
+    return (await this.awaitExternal(this.dependencies.getRunningProcessNames([processName]), recovery)).has(
       processName.toLowerCase()
     );
   }
 
-  private isBusy(): boolean {
-    return (
-      Boolean(this.running) ||
-      (this.status.action === "hard-recover" && isActiveHardRecoveryPhase(this.status.phase))
-    );
+  private beginOperation(operationId: string, action: VrRecoveryAction): RecoveryOperation {
+    this.abortActive();
+    const recovery = this.restoreOperation(operationId, action);
+    recovery.watchdog = setTimeout(() => {
+      if (this.active !== recovery || recovery.controller.signal.aborted) return;
+      const phase = this.status.phase;
+      recovery.controller.abort();
+      void this.setStatus(
+        { phase: "failed-needs-attention", reason: `watchdog timeout at ${phase}` },
+        recovery
+      ).finally(() => {
+        if (this.active === recovery) this.active = undefined;
+      });
+    }, this.watchdogTimeoutMs(action));
+    return recovery;
+  }
+
+  private restoreOperation(operationId: string, action: VrRecoveryAction): RecoveryOperation {
+    const recovery = { operationId, action, controller: new AbortController() };
+    this.active = recovery;
+    return recovery;
+  }
+
+  private run(recovery: RecoveryOperation, task: () => Promise<void>): Promise<void> {
+    const running = task();
+    recovery.running = running;
+    void running
+      .catch((error) => {
+        if (!isAbortError(error))
+          this.log.error("VR recovery stopped unexpectedly", { error: formatError(error) });
+      })
+      .finally(() => {
+        if (recovery.running === running) recovery.running = undefined;
+      });
+    return running;
+  }
+
+  private abortActive(): void {
+    const recovery = this.active;
+    if (!recovery) return;
+    recovery.controller.abort();
+    if (recovery.watchdog) clearTimeout(recovery.watchdog);
+    this.active = undefined;
+  }
+
+  private isSameOperation(operationId: string): boolean {
+    return this.active?.operationId === operationId || this.status.operationId === operationId;
   }
 
   private rejectedBusyResult(): VrChatRecoveryRequestResult {
@@ -463,24 +545,76 @@ export class VrChatRecoveryService {
     };
   }
 
-  private async fail(reason: string): Promise<void> {
-    await this.setStatus({ phase: "failed-needs-attention", reason });
+  private watchdogTimeoutMs(action: VrRecoveryAction): number {
+    if (action === "start") return this.config.vrChatRecovery.startWatchdogTimeoutMs;
+    if (action === "soft-recover") return this.config.vrChatRecovery.softRecoveryWatchdogTimeoutMs;
+    return this.config.hardRecovery.watchdogTimeoutMs;
   }
 
-  private async setStatus(change: Partial<VrRecoveryStatus>): Promise<void> {
+  private throwIfAborted(recovery: RecoveryOperation): void {
+    if (recovery.controller.signal.aborted || this.active !== recovery)
+      throw new Error("Recovery operation aborted");
+  }
+
+  private async awaitExternal<T>(promise: Promise<T>, recovery: RecoveryOperation): Promise<T> {
+    this.throwIfAborted(recovery);
+    return new Promise<T>((resolve, reject) => {
+      const onAbort = () => reject(new Error("Recovery operation aborted"));
+      recovery.controller.signal.addEventListener("abort", onAbort, { once: true });
+      void promise.then(
+        (value) => {
+          recovery.controller.signal.removeEventListener("abort", onAbort);
+          resolve(value);
+        },
+        (error: unknown) => {
+          recovery.controller.signal.removeEventListener("abort", onAbort);
+          reject(error);
+        }
+      );
+    });
+  }
+
+  private sleep(ms: number, recovery: RecoveryOperation): Promise<void> {
+    return this.awaitExternal(this.dependencies.sleep(ms), recovery);
+  }
+
+  private async fail(reason: string, recovery?: RecoveryOperation): Promise<void> {
+    await this.setStatus({ phase: "failed-needs-attention", reason }, recovery);
+  }
+
+  private async setStatus(
+    change: Partial<VrRecoveryStatus>,
+    recovery?: RecoveryOperation
+  ): Promise<void> {
+    if (recovery && this.active !== recovery) return;
     this.status = { ...this.status, ...change, updatedAt: this.dependencies.now().toISOString() };
+    if (this.status.phase !== "failed-needs-attention") delete this.status.reason;
+    if (isTerminalPhase(this.status.phase) && recovery?.watchdog) {
+      clearTimeout(recovery.watchdog);
+      recovery.watchdog = undefined;
+    }
+    this.notifyStatus();
     if (this.status.action === "hard-recover") {
       try {
-        await this.dependencies.saveStatus(this.status);
+        const save = this.dependencies.saveStatus(this.status);
+        if (recovery) await this.awaitExternal(save, recovery);
+        else await withTimeout(save, 10_000, "Hard recovery journal save timed out");
       } catch (error) {
+        if (recovery && this.active !== recovery) return;
+        if (isAbortError(error) && this.status.phase === "failed-needs-attention") return;
         this.status = {
           ...this.status,
           phase: "failed-needs-attention",
+          updatedAt: this.dependencies.now().toISOString(),
           reason: `Could not save hard recovery journal: ${formatError(error)}`
         };
         this.log.error("Could not save hard recovery journal", { error: formatError(error) });
+        this.notifyStatus();
       }
     }
+  }
+
+  private notifyStatus(): void {
     for (const listener of this.statusListeners) listener(this.status);
     this.log.info("VR recovery status changed", this.status);
   }
@@ -489,27 +623,42 @@ export class VrChatRecoveryService {
 function completionStatus(
   instanceId: string | undefined,
   rejoined: boolean | undefined,
-  action: VrRecoveryAction
+  _action: VrRecoveryAction
 ): Pick<VrRecoveryStatus, "phase" | "reason"> {
   if (!instanceId) {
-    return {
-      phase: "completed-with-warning",
-      reason:
-        action === "soft-recover" || action === "hard-recover"
-          ? "No previous VRChat instance was found; launched normally"
-          : undefined
-    };
+    return { phase: "completed-with-warning", reason: undefined };
   }
   return rejoined
     ? { phase: "completed", reason: undefined }
-    : {
-        phase: "completed-with-warning",
-        reason: "VRChat started but the requested instance rejoin was not observed"
-      };
+    : { phase: "completed-with-warning", reason: undefined };
 }
 
 function isActiveHardRecoveryPhase(phase: VrRecoveryPhase): boolean {
-  return !["idle", "completed", "completed-with-warning", "failed-needs-attention"].includes(phase);
+  return !isTerminalPhase(phase);
+}
+
+function isTerminalPhase(phase: VrRecoveryPhase): boolean {
+  return ["idle", "completed", "completed-with-warning", "failed-needs-attention"].includes(phase);
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.message === "Recovery operation aborted";
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+    void promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timeout);
+        reject(error);
+      }
+    );
+  });
 }
 
 function createDefaultDependencies(config: AppConfig, logger: Logger): VrChatRecoveryDependencies {

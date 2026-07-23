@@ -93,6 +93,8 @@ export interface XsOverlayRecoveryConfig {
 
 export interface VrChatRecoveryConfig {
   enabled: boolean;
+  startWatchdogTimeoutMs: number;
+  softRecoveryWatchdogTimeoutMs: number;
   steamPath: string;
   steamVrAppId: string;
   oyasumiVrAppId: string;
@@ -103,6 +105,7 @@ export interface VrChatRecoveryConfig {
 
 export interface HardRecoveryConfig {
   enabled: boolean;
+  watchdogTimeoutMs: number;
   /** Allow the interactive desktop and startup applications to settle after logon. */
   desktopSettleMs: number;
   matrixReadyTimeoutMs: number;
@@ -256,6 +259,8 @@ export const defaultConfig: AppConfig = {
   },
   vrChatRecovery: {
     enabled: true,
+    startWatchdogTimeoutMs: 180_000,
+    softRecoveryWatchdogTimeoutMs: 300_000,
     steamPath: "C:\\Program Files (x86)\\Steam\\steam.exe",
     steamVrAppId: "250820",
     oyasumiVrAppId: "2538150",
@@ -273,6 +278,7 @@ export const defaultConfig: AppConfig = {
   },
   hardRecovery: {
     enabled: true,
+    watchdogTimeoutMs: 1_800_000,
     desktopSettleMs: 90_000,
     matrixReadyTimeoutMs: 180_000,
     matrixReadyRetryDelayMs: 5_000

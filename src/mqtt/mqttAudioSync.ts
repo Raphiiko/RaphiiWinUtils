@@ -61,6 +61,8 @@ export class MqttAudioSyncService implements AudioModePublisher {
   private state: AudioMqttState = { channelVolumes: {} };
   private stateReady?: Promise<void>;
   private stateSaveTail: Promise<void> = Promise.resolve();
+  private recoveryPublishTail: Promise<void> = Promise.resolve();
+  private latestRecoveryStatus?: VrRecoveryStatus;
   private removeChannelListener?: () => void;
   private removeRecoveryStatusListener?: () => void;
   private stopped = false;
@@ -162,6 +164,7 @@ export class MqttAudioSyncService implements AudioModePublisher {
     await this.subscribe(this.topic("vr/recovery/hard/set"));
     await this.subscribe(this.topic("vr/recovery/hard/resume/set"));
     await this.subscribe(this.topic("vr/recovery/hard/cancel/set"));
+    await this.subscribe(this.topic("vr/recovery/cancel/set"));
     await Promise.all(
       this.channels
         .configuredChannelNames()
@@ -171,7 +174,8 @@ export class MqttAudioSyncService implements AudioModePublisher {
     await this.publishDiscovery();
     await this.publish(this.topic("availability"), "online", true);
     await this.publishAllState();
-    if (this.vrChatRecovery) await this.publishRecoveryStatus(this.vrChatRecovery.getStatus());
+    if (this.vrChatRecovery)
+      await this.publishRecoveryStatus(this.latestRecoveryStatus ?? this.vrChatRecovery.getStatus());
   }
 
   private async onMessage(
@@ -223,8 +227,14 @@ export class MqttAudioSyncService implements AudioModePublisher {
         });
         return;
       }
-      if (payload !== "PRESS") return;
-      await this.runVrRecoveryAction(vrRecoveryButton.action);
+      const operationId = payload === "PRESS" ? undefined : parseOperationId(payload);
+      if (payload !== "PRESS" && !operationId) {
+        this.log.warn("Ignoring VR recovery action without an operation ID", {
+          action: vrRecoveryButton.action
+        });
+        return;
+      }
+      await this.runVrRecoveryAction(vrRecoveryButton.action, operationId);
       return;
     }
     if (topic === this.topic("vr/recovery/hard/resume/set")) {
@@ -240,17 +250,16 @@ export class MqttAudioSyncService implements AudioModePublisher {
       await this.resumeHardRecovery(operationId);
       return;
     }
-    if (topic === this.topic("vr/recovery/hard/cancel/set")) {
+    if (
+      topic === this.topic("vr/recovery/cancel/set") ||
+      topic === this.topic("vr/recovery/hard/cancel/set")
+    ) {
       if (packet.retain) {
-        this.log.warn("Ignoring retained hard recovery cancel command");
+        this.log.warn("Ignoring retained VR recovery cancel command");
         return;
       }
       const command = parseRecoveryCommand(payload);
-      if (!command.operationId) {
-        this.log.warn("Ignoring hard recovery cancel without an operation ID");
-        return;
-      }
-      await this.cancelHardRecovery(command.operationId, command.reason);
+      await this.cancelVrRecovery(command.operationId, command.reason);
       return;
     }
     const channel = this.channels
@@ -407,15 +416,18 @@ export class MqttAudioSyncService implements AudioModePublisher {
     );
   }
 
-  private async runVrRecoveryAction(action: VrRecoveryAction): Promise<void> {
+  private async runVrRecoveryAction(
+    action: VrRecoveryAction,
+    operationId?: string
+  ): Promise<void> {
     if (!this.vrChatRecovery) {
       this.log.warn("Ignoring MQTT VRChat action because recovery is unavailable", { action });
       return;
     }
     const result =
       action === "soft-recover"
-        ? await this.vrChatRecovery.recoverLastInstance()
-        : await this.vrChatRecovery.startVrChat();
+        ? await this.vrChatRecovery.recoverLastInstance(operationId)
+        : await this.vrChatRecovery.startVrChat(operationId);
     if (!result.accepted) {
       this.log.warn(
         "Ignoring MQTT VR recovery action because another action is running or recovery is disabled",
@@ -444,18 +456,28 @@ export class MqttAudioSyncService implements AudioModePublisher {
       this.log.warn("Ignoring hard recovery request", { operationId, reason: result.reason });
   }
 
-  private async cancelHardRecovery(operationId: string, reason: string | undefined): Promise<void> {
+  private async cancelVrRecovery(operationId: string | undefined, reason: string | undefined): Promise<void> {
     if (!this.vrChatRecovery) return;
-    const result = await this.vrChatRecovery.cancelHardRecovery(
-      operationId,
-      reason ?? "Cancelled by Home Assistant"
-    );
+    const result = this.vrChatRecovery.cancel
+      ? await this.vrChatRecovery.cancel(operationId, reason)
+      : await this.vrChatRecovery.cancelHardRecovery(
+          operationId ?? "",
+          reason ?? "Cancelled by Home Assistant"
+        );
     if (!result.accepted)
-      this.log.warn("Ignoring hard recovery cancel", { operationId, reason: result.reason });
+      this.log.warn("Ignoring VR recovery cancel", { operationId, reason: result.reason });
   }
 
   private async publishRecoveryStatus(status: VrRecoveryStatus): Promise<void> {
-    await this.publish(this.topic("vr/recovery/status"), JSON.stringify(status), true);
+    this.latestRecoveryStatus = { ...structuredClone(status), updatedAt: new Date().toISOString() };
+    const statusToPublish = this.latestRecoveryStatus;
+    const publish = this.recoveryPublishTail.then(() =>
+      this.publish(this.topic("vr/recovery/status"), JSON.stringify(statusToPublish), true)
+    );
+    this.recoveryPublishTail = publish.catch((error) => {
+      this.log.warn("Could not publish VR recovery status", { error: formatError(error) });
+    });
+    await this.recoveryPublishTail;
   }
 
   private async subscribe(topic: string): Promise<void> {
@@ -502,13 +524,14 @@ export class MqttAudioSyncService implements AudioModePublisher {
 }
 
 interface VrChatRecoveryController {
-  recoverLastInstance(): Promise<VrChatRecoveryRequestResult>;
-  startVrChat(): Promise<VrChatRecoveryRequestResult>;
+  recoverLastInstance(operationId?: string): Promise<VrChatRecoveryRequestResult>;
+  startVrChat(operationId?: string): Promise<VrChatRecoveryRequestResult>;
   hardRecover(
     operationId: string,
     beforeReboot: () => Promise<void>
   ): Promise<VrChatRecoveryRequestResult>;
   resumeHardRecovery(operationId: string): Promise<VrChatRecoveryRequestResult>;
+  cancel?(operationId?: string, reason?: string): Promise<VrChatRecoveryRequestResult>;
   cancelHardRecovery(operationId: string, reason: string): Promise<VrChatRecoveryRequestResult>;
   getStatus(): VrRecoveryStatus;
   onStatusChange(listener: (status: VrRecoveryStatus) => void): () => void;
