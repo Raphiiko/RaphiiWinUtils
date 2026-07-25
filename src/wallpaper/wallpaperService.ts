@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Logger } from "../system/logger.ts";
 import { getWallpaperHelperPath } from "../system/paths.ts";
@@ -121,6 +121,17 @@ export class WallpaperService {
     await this.writeAtomic(join(this.libraryDir, file), bytes);
     this.log.info("Wallpaper added to library", { file, sizeBytes: bytes.byteLength });
     return { file, sizeBytes: bytes.byteLength, modifiedMs: Date.now() };
+  }
+
+  async removeImage(name: unknown): Promise<string> {
+    const file = sanitizeLibraryName(name);
+    const path = join(this.libraryDir, file);
+    if (!existsSync(path))
+      throw new InvalidWallpaperRequestError(`Library file not found: ${file}`);
+
+    await unlink(path);
+    this.log.info("Wallpaper removed from library", { file });
+    return file;
   }
 
   /**

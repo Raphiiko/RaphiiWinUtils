@@ -72,6 +72,9 @@ export function wallpaperRoutes(service: WallpaperService, logger: Logger) {
           return await service.addImage(context.query.name, bytes);
         })
       )
+      .delete("/library/:file", (context) =>
+        guard(context, async () => ({ file: await service.removeImage(context.params.file) }))
+      )
       .get("/current", (context) =>
         guard(context, async () => ({ assignments: await service.listCurrent() }))
       )
