@@ -24,6 +24,10 @@ export function getWallpaperHelperPath(): string {
   return getRuntimeHelperPath("WallpaperHelper", "WallpaperHelper.exe");
 }
 
+export function getTrayApplicationPath(): string {
+  return getRuntimeHelperPath("TrayApplication", "TrayApplication.exe");
+}
+
 function getRuntimeHelperPath(helperDirName: string, exeName: string): string {
   const runtimeHelper = join(getRuntimeRoot(), "helpers", helperDirName, exeName);
   if (existsSync(runtimeHelper)) return runtimeHelper;
