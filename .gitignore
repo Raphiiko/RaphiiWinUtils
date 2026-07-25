@@ -8,3 +8,7 @@ dist/
 bin/
 obj/
 appsettings.local.json
+.mcp.json
+opencode.json
+.codex/
+.worktrees/

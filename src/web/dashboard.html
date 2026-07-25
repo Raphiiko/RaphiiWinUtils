@@ -1468,7 +1468,9 @@
         for (const mode of [...state.modes].sort((a, b) => {
           const aIndex = modeOrder.indexOf(a.id);
           const bIndex = modeOrder.indexOf(b.id);
-          return (aIndex < 0 ? modeOrder.length : aIndex) - (bIndex < 0 ? modeOrder.length : bIndex);
+          return (
+            (aIndex < 0 ? modeOrder.length : aIndex) - (bIndex < 0 ? modeOrder.length : bIndex)
+          );
         })) {
           const button = document.createElement("button");
           button.type = "button";
