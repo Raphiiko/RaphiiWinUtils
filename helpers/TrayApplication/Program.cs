@@ -1,4 +1,5 @@
 using Microsoft.Web.WebView2.WinForms;
+using System.Runtime.InteropServices;
 
 namespace TrayApplication;
 
@@ -28,6 +29,10 @@ internal sealed class TrayContext : ApplicationContext
             ContextMenuStrip = new ContextMenuStrip()
         };
         icon.ContextMenuStrip.Items.Add("Exit", null, (_, _) => ExitThread());
+        icon.MouseDown += (_, eventArgs) =>
+        {
+            if (eventArgs.Button == MouseButtons.Left) popup.SuppressNextDeactivate();
+        };
         icon.MouseUp += (_, eventArgs) =>
         {
             if (eventArgs.Button == MouseButtons.Left) popup.Toggle();
@@ -45,10 +50,16 @@ internal sealed class TrayContext : ApplicationContext
 
 internal sealed class DashboardPopup : Form
 {
-    private const int PopupWidth = 900;
-    private const int PopupHeight = 700;
+    private const int PopupWidth = 1000;
+    private const int PopupHeight = 780;
+    private const int PopupMargin = 8;
+    private const int DwmWindowCornerPreference = 33;
+    private const int DwmWindowCornerPreferenceRound = 2;
+    private const int WsBorder = 0x00800000;
+    private const int CsDropShadow = 0x00020000;
     private readonly WebView2 browser = new() { Dock = DockStyle.Fill };
     private readonly string url;
+    private bool suppressNextDeactivate;
 
     public DashboardPopup(string url)
     {
@@ -58,7 +69,41 @@ internal sealed class DashboardPopup : Form
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
         Size = new Size(PopupWidth, PopupHeight);
-        Deactivate += (_, _) => Hide();
+        Deactivate += (_, _) => BeginInvoke(HideUnlessSuppressed);
+    }
+
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var parameters = base.CreateParams;
+            parameters.Style |= WsBorder;
+            parameters.ClassStyle |= CsDropShadow;
+            return parameters;
+        }
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        var cornerPreference = DwmWindowCornerPreferenceRound;
+        DwmSetWindowAttribute(Handle, DwmWindowCornerPreference, ref cornerPreference, sizeof(int));
+    }
+
+    public void SuppressNextDeactivate()
+    {
+        suppressNextDeactivate = Visible;
+    }
+
+    private void HideUnlessSuppressed()
+    {
+        if (suppressNextDeactivate)
+        {
+            suppressNextDeactivate = false;
+            return;
+        }
+
+        Hide();
     }
 
     public async void Toggle()
@@ -70,7 +115,7 @@ internal sealed class DashboardPopup : Form
         }
 
         var area = Screen.FromPoint(Cursor.Position).WorkingArea;
-        Location = new Point(area.Right - PopupWidth - 12, area.Bottom - PopupHeight - 12);
+        Location = new Point(area.Right - Width - PopupMargin, area.Bottom - Height - PopupMargin);
         Show();
         Activate();
 
@@ -80,4 +125,12 @@ internal sealed class DashboardPopup : Form
             browser.Source = new Uri(url);
         }
     }
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(
+        IntPtr hwnd,
+        int attribute,
+        ref int value,
+        int valueSize
+    );
 }
