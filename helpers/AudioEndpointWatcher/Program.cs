@@ -160,6 +160,7 @@ internal sealed class EndpointWatcher : IDisposable
     public void Run()
     {
         enumerator.RegisterEndpointNotificationCallback(notificationClient);
+        _ = Task.Run(ReadCommands);
         Write(new { type = "ready" });
         SafeSnapshot("snapshot");
         resyncTimer.Change(resyncMs, resyncMs);
@@ -193,6 +194,80 @@ internal sealed class EndpointWatcher : IDisposable
     {
         if (disposed) return;
         deviceChangeTimer.Change(DeviceChangeDebounceMs, Timeout.Infinite);
+    }
+
+    private void ReadCommands()
+    {
+        string? line;
+        while (!disposed && (line = Console.ReadLine()) is not null)
+        {
+            string? requestId = null;
+            try
+            {
+                var command = JsonSerializer.Deserialize<VolumePolicyCommand>(line, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                }) ?? throw new ArgumentException("Invalid audio endpoint command");
+                requestId = command.RequestId;
+                if (command.Type != "apply-volume-policy" || string.IsNullOrWhiteSpace(command.RequestId))
+                    throw new ArgumentException("Unknown audio endpoint command");
+                if (command.Mode != "set") throw new ArgumentException("Unsupported audio endpoint volume mode");
+
+                ApplyVolumePolicy(command);
+            }
+            catch (Exception ex)
+            {
+                Write(new { type = "volume-policy-result", requestId, error = ex.Message, results = Array.Empty<VolumePolicyResult>() });
+            }
+        }
+    }
+
+    private void ApplyVolumePolicy(VolumePolicyCommand command)
+    {
+        VolumePolicyResult[] results;
+        lock (snapshotLock)
+        {
+            var matches = subscriptions.Values
+                .Where(subscription => subscription.Device.FriendlyName.Contains(
+                    command.EndpointNameContains,
+                    StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            if (matches.Length == 0)
+            {
+                results = [new VolumePolicyResult(
+                    command.EndpointNameContains,
+                    null,
+                    command.VolumePercent,
+                    command.Mode,
+                    false,
+                    false,
+                    null,
+                    null)];
+            }
+            else
+            {
+                var targetPercent = Math.Clamp(command.VolumePercent, 0, 100);
+                var targetScalar = targetPercent / 100f;
+                results = matches.Select(subscription =>
+                {
+                    var device = subscription.Device;
+                    var previousScalar = device.AudioEndpointVolume.MasterVolumeLevelScalar;
+                    var changed = Math.Abs(previousScalar - targetScalar) > 0.0001f;
+                    if (changed) device.AudioEndpointVolume.MasterVolumeLevelScalar = targetScalar;
+                    return new VolumePolicyResult(
+                        command.EndpointNameContains,
+                        device.FriendlyName,
+                        targetPercent,
+                        command.Mode,
+                        true,
+                        changed,
+                        (int)Math.Round(previousScalar * 100),
+                        device.AudioEndpointVolume.Mute);
+                }).ToArray();
+            }
+        }
+
+        Write(new { type = "volume-policy-result", command.RequestId, results });
     }
 
     private void SubscribeAll(IReadOnlyCollection<MMDevice> activeDevices)
@@ -332,6 +407,8 @@ internal sealed class EndpointSubscription : IDisposable
         this.callback = callback;
     }
 
+    public MMDevice Device => device;
+
     public void Dispose()
     {
         try
@@ -395,3 +472,10 @@ internal sealed record VolumePolicyResult(
     bool Changed,
     int? PreviousVolumePercent,
     bool? Muted);
+
+internal sealed record VolumePolicyCommand(
+    string Type,
+    string RequestId,
+    string EndpointNameContains,
+    int VolumePercent,
+    string Mode);

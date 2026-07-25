@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import type { Logger } from "../system/logger.ts";
+import type { AudioEndpointWatcher } from "./audioEndpointWatcher.ts";
 import { getHelperPath } from "../system/paths.ts";
 import { requireSuccess } from "../system/process.ts";
 
@@ -63,6 +64,35 @@ export class WindowsAudioEndpointVolumeController implements AudioEndpointVolume
         targetVolumePercent: entry.targetVolumePercent,
         muted: entry.muted
       });
+    }
+  }
+}
+
+export class WatchedAudioEndpointVolumeController implements AudioEndpointVolumeController {
+  private readonly watcher: AudioEndpointWatcher;
+
+  constructor(watcher: AudioEndpointWatcher) {
+    this.watcher = watcher;
+  }
+
+  async apply(policies: AudioEndpointVolumePolicy[]): Promise<void> {
+    for (const policy of policies) {
+      if (policy.mode !== "set") {
+        throw new Error("The persistent audio watcher only supports set volume policies");
+      }
+
+      const results = await this.watcher.setVolume(
+        policy.endpointNameContains,
+        policy.volumePercent
+      );
+      const missing = results.filter((entry) => !entry.found);
+      if (missing.length > 0) {
+        throw new Error(
+          `Audio endpoints not found: ${missing
+            .map((entry) => entry.endpointNameContains)
+            .join(", ")}`
+        );
+      }
     }
   }
 }

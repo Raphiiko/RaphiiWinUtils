@@ -3,7 +3,7 @@ import type { AppConfig } from "../config/schema.ts";
 import { AudioEndpointWatcher } from "../audio/audioEndpointWatcher.ts";
 import { mapEndpointsToChannels } from "../audio/channelMapper.ts";
 import {
-  WindowsAudioEndpointVolumeController,
+  WatchedAudioEndpointVolumeController,
   type AudioEndpointVolumeController,
   type AudioEndpointVolumePolicy
 } from "../audio/audioEndpointVolumeController.ts";
@@ -16,17 +16,11 @@ export class ChannelVolumeService {
   private readonly subscriptions = new Subscription();
   private readonly log: Logger;
   private readonly config: AppConfig;
-  private readonly volumeController: AudioEndpointVolumeController;
+  private volumeController?: AudioEndpointVolumeController;
   private readonly latestStates = new Map<string, ChannelState>();
   private readonly listeners = new Set<(state: ChannelState) => void>();
 
-  constructor(
-    config: AppConfig,
-    logger: Logger,
-    volumeController: AudioEndpointVolumeController = new WindowsAudioEndpointVolumeController(
-      logger
-    )
-  ) {
+  constructor(config: AppConfig, logger: Logger, volumeController?: AudioEndpointVolumeController) {
     this.config = config;
     this.log = logger.child("channel-volume");
     this.volumeController = volumeController;
@@ -34,6 +28,7 @@ export class ChannelVolumeService {
 
   start(): void {
     const watcher = new AudioEndpointWatcher(this.config.audio.endpointResyncMs, this.log);
+    this.volumeController ??= new WatchedAudioEndpointVolumeController(watcher);
     const matrixClient = new VbanTextClient(this.config.matrix, this.log);
     const matrixSync = new MatrixPresetSync(matrixClient, this.log);
     matrixSync.start();
@@ -136,6 +131,7 @@ export class ChannelVolumeService {
       throw new InvalidAudioVolumeError(volumePercent);
     }
 
+    if (!this.volumeController) throw new Error("Channel volume service is not started");
     await this.volumeController.apply([
       {
         endpointNameContains: channel.endpointNameContains,

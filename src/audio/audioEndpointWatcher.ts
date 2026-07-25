@@ -1,7 +1,11 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { Observable, share } from "rxjs";
-import type { AudioEndpointState, AudioWatcherMessage } from "./types.ts";
+import type {
+  AudioEndpointState,
+  AudioEndpointVolumePolicyResult,
+  AudioWatcherMessage
+} from "./types.ts";
 import { getHelperPath } from "../system/paths.ts";
 import { Logger } from "../system/logger.ts";
 
@@ -11,6 +15,15 @@ const volumeEpsilon = 0.00001;
 
 export class AudioEndpointWatcher {
   private child?: ChildProcessWithoutNullStreams;
+  private nextRequestId = 0;
+  private readonly pendingVolumeRequests = new Map<
+    string,
+    {
+      resolve: (results: AudioEndpointVolumePolicyResult[]) => void;
+      reject: (error: Error) => void;
+      timeout: ReturnType<typeof setTimeout>;
+    }
+  >();
   private readonly log: Logger;
   private readonly endpointResyncMs: number;
 
@@ -119,6 +132,13 @@ export class AudioEndpointWatcher {
               const message = JSON.parse(line) as AudioWatcherMessage;
               if (message.type === "ready") {
                 this.log.info("Audio endpoint watcher ready");
+              } else if (message.type === "volume-policy-result" && message.requestId) {
+                const request = this.pendingVolumeRequests.get(message.requestId);
+                if (!request) continue;
+                clearTimeout(request.timeout);
+                this.pendingVolumeRequests.delete(message.requestId);
+                if (message.error) request.reject(new Error(message.error));
+                else request.resolve(message.results ?? []);
               } else if (message.type === "snapshot" && message.endpoints) {
                 publishSnapshot(message.endpoints);
               } else if (message.type === "endpoint" && message.endpoint) {
@@ -138,11 +158,15 @@ export class AudioEndpointWatcher {
 
         child.on("error", (error) => {
           if (this.child === child) this.child = undefined;
+          this.rejectPendingVolumeRequests(error);
           scheduleRestart({ error: String(error) });
         });
 
         child.on("exit", (code, signal) => {
           if (this.child === child) this.child = undefined;
+          this.rejectPendingVolumeRequests(
+            new Error(`Audio endpoint watcher exited (${code ?? signal ?? "unknown"})`)
+          );
           if (!stopping) scheduleRestart({ code, signal });
         });
       };
@@ -154,8 +178,52 @@ export class AudioEndpointWatcher {
         if (restartTimer) clearTimeout(restartTimer);
         this.child?.kill();
         this.child = undefined;
+        this.rejectPendingVolumeRequests(new Error("Audio endpoint watcher stopped"));
       };
     }).pipe(share());
+  }
+
+  setVolume(
+    endpointNameContains: string,
+    volumePercent: number
+  ): Promise<AudioEndpointVolumePolicyResult[]> {
+    const child = this.child;
+    if (!child?.stdin.writable) {
+      return Promise.reject(new Error("Audio endpoint watcher is not ready"));
+    }
+
+    const requestId = String(++this.nextRequestId);
+    const command = JSON.stringify({
+      type: "apply-volume-policy",
+      requestId,
+      endpointNameContains,
+      volumePercent,
+      mode: "set"
+    });
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingVolumeRequests.delete(requestId);
+        reject(new Error("Audio endpoint volume command timed out"));
+      }, 2_000);
+      this.pendingVolumeRequests.set(requestId, { resolve, reject, timeout });
+      child.stdin.write(`${command}\n`, (error) => {
+        if (!error) return;
+        const request = this.pendingVolumeRequests.get(requestId);
+        if (!request) return;
+        clearTimeout(request.timeout);
+        this.pendingVolumeRequests.delete(requestId);
+        reject(error);
+      });
+    });
+  }
+
+  private rejectPendingVolumeRequests(error: Error): void {
+    for (const request of this.pendingVolumeRequests.values()) {
+      clearTimeout(request.timeout);
+      request.reject(error);
+    }
+    this.pendingVolumeRequests.clear();
   }
 }
 

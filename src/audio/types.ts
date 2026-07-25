@@ -9,10 +9,24 @@ export interface AudioEndpointState {
 }
 
 export interface AudioWatcherMessage {
-  type: "ready" | "endpoint" | "snapshot" | "error";
+  type: "ready" | "endpoint" | "snapshot" | "error" | "volume-policy-result";
   endpoints?: AudioEndpointState[];
   endpoint?: AudioEndpointState;
   message?: string;
+  error?: string;
+  requestId?: string;
+  results?: AudioEndpointVolumePolicyResult[];
+}
+
+export interface AudioEndpointVolumePolicyResult {
+  endpointNameContains: string;
+  endpointName?: string;
+  targetVolumePercent: number;
+  mode: "cap" | "set";
+  found: boolean;
+  changed: boolean;
+  previousVolumePercent?: number;
+  muted?: boolean;
 }
 
 export interface ChannelState {

@@ -1568,17 +1568,23 @@
           paint();
 
           let sendTimer;
+          let lastSentAt = 0;
           const send = () => {
-            clearTimeout(sendTimer);
-            sendTimer = setTimeout(async () => {
-              try {
-                await postJson(`/audio/volumes/${encodeURIComponent(channel.name)}`, {
-                  volumePercent: volume
-                });
-              } catch (error) {
-                say(error.message, true);
-              }
-            }, 150);
+            if (sendTimer) return;
+            sendTimer = setTimeout(
+              async () => {
+                sendTimer = undefined;
+                lastSentAt = performance.now();
+                try {
+                  await postJson(`/audio/volumes/${encodeURIComponent(channel.name)}`, {
+                    volumePercent: volume
+                  });
+                } catch (error) {
+                  say(error.message, true);
+                }
+              },
+              Math.max(0, 16 - (performance.now() - lastSentAt))
+            );
           };
           const setVolume = (next) => {
             volume = Math.max(0, Math.min(100, Math.round(next)));
