@@ -59,9 +59,9 @@ internal sealed class TrayContext : ApplicationContext
 
 internal sealed class DashboardPopup : Form
 {
-    private const int PopupWidth = 1000;
-    private const int PopupHeight = 780;
-    private const int PopupMargin = 8;
+    private const int PopupWidth = 1020;
+    private const int PopupHeight = 788;
+    private const int PopupMargin = 4;
     private const int DwmWindowCornerPreference = 33;
     private const int DwmWindowCornerPreferenceRound = 2;
     private const int WsBorder = 0x00800000;
@@ -136,6 +136,10 @@ internal sealed class DashboardPopup : Form
         }
 
         var area = Screen.FromPoint(Cursor.Position).WorkingArea;
+        Size = new Size(
+            Math.Min(PopupWidth, area.Width - PopupMargin * 2),
+            Math.Min(PopupHeight, area.Height - PopupMargin * 2)
+        );
         Location = new Point(area.Right - Width - PopupMargin, area.Bottom - Height - PopupMargin);
         ShowWithAnimation();
         await browserInitialization;
