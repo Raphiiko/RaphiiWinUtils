@@ -23,7 +23,7 @@ internal sealed class TrayContext : ApplicationContext
         popup = new DashboardPopup(url);
         icon = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = LoadTrayIcon(),
             Text = "RaphiiWinUtils",
             Visible = true,
             ContextMenuStrip = new ContextMenuStrip()
@@ -45,6 +45,15 @@ internal sealed class TrayContext : ApplicationContext
         icon.Dispose();
         popup.Dispose();
         base.ExitThreadCore();
+    }
+
+    private static Icon LoadTrayIcon()
+    {
+        const string resourceName = "TrayApplication.Assets.tray-icon.ico";
+        using var stream = typeof(TrayContext).Assembly.GetManifestResourceStream(resourceName)
+            ?? throw new InvalidOperationException($"Missing tray icon resource: {resourceName}");
+        using var source = new Icon(stream);
+        return (Icon)source.Clone();
     }
 }
 

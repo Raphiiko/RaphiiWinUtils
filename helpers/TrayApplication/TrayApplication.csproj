@@ -10,4 +10,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3124.44" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\tray-icon.ico" />
+  </ItemGroup>
 </Project>
