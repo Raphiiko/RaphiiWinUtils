@@ -67,11 +67,14 @@ internal sealed class DashboardPopup : Form
     private const int WsBorder = 0x00800000;
     private const int CsDropShadow = 0x00020000;
     private const int PopupAnimationDuration = 140;
-    private const int AwHide = 0x00010000;
-    private const int AwActivate = 0x00020000;
-    private const int AwBlend = 0x00080000;
     private readonly WebView2 browser = new() { Dock = DockStyle.Fill };
+    private readonly System.Windows.Forms.Timer animationTimer = new() { Interval = 15 };
+    private readonly Task browserInitialization;
     private readonly string url;
+    private DateTime animationStarted;
+    private double animationStartOpacity;
+    private double animationTargetOpacity;
+    private bool hideAfterAnimation;
     private bool suppressNextDeactivate;
 
     public DashboardPopup(string url)
@@ -83,6 +86,11 @@ internal sealed class DashboardPopup : Form
         StartPosition = FormStartPosition.Manual;
         Size = new Size(PopupWidth, PopupHeight);
         Deactivate += (_, _) => BeginInvoke(HideUnlessSuppressed);
+        animationTimer.Tick += (_, _) => UpdateAnimation();
+        Disposed += (_, _) => animationTimer.Dispose();
+        CreateControl();
+        browser.CreateControl();
+        browserInitialization = InitializeBrowserAsync();
     }
 
     protected override CreateParams CreateParams
@@ -130,12 +138,7 @@ internal sealed class DashboardPopup : Form
         var area = Screen.FromPoint(Cursor.Position).WorkingArea;
         Location = new Point(area.Right - Width - PopupMargin, area.Bottom - Height - PopupMargin);
         ShowWithAnimation();
-
-        if (browser.Source is null)
-        {
-            await browser.EnsureCoreWebView2Async();
-            browser.Source = new Uri(url);
-        }
+        await browserInitialization;
     }
 
     [DllImport("dwmapi.dll")]
@@ -146,16 +149,51 @@ internal sealed class DashboardPopup : Form
         int valueSize
     );
 
-    [DllImport("user32.dll")]
-    private static extern bool AnimateWindow(IntPtr handle, int duration, int flags);
-
     private void ShowWithAnimation()
     {
-        if (!AnimateWindow(Handle, PopupAnimationDuration, AwActivate | AwBlend)) Show();
+        animationTimer.Stop();
+        Opacity = 0;
+        Show();
+        Activate();
+        StartAnimation(1, false);
     }
 
     private void HideWithAnimation()
     {
-        if (!AnimateWindow(Handle, PopupAnimationDuration, AwHide | AwBlend)) Hide();
+        if (!Visible || hideAfterAnimation) return;
+        StartAnimation(0, true);
+    }
+
+    private async Task InitializeBrowserAsync()
+    {
+        await browser.EnsureCoreWebView2Async();
+        browser.Source = new Uri(url);
+    }
+
+    private void StartAnimation(double targetOpacity, bool hideWhenComplete)
+    {
+        animationTimer.Stop();
+        animationStarted = DateTime.UtcNow;
+        animationStartOpacity = Opacity;
+        animationTargetOpacity = targetOpacity;
+        hideAfterAnimation = hideWhenComplete;
+        animationTimer.Start();
+    }
+
+    private void UpdateAnimation()
+    {
+        var progress = Math.Min(
+            1,
+            (DateTime.UtcNow - animationStarted).TotalMilliseconds / PopupAnimationDuration
+        );
+        Opacity = animationStartOpacity + (animationTargetOpacity - animationStartOpacity) * progress;
+        if (progress < 1) return;
+
+        animationTimer.Stop();
+        if (!hideAfterAnimation) return;
+
+        Hide();
+        Opacity = 1;
+        hideAfterAnimation = false;
     }
 }
