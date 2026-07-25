@@ -1024,13 +1024,31 @@
         flex-wrap: wrap;
       }
 
-      @media (max-width: 56rem) {
+      @media (max-width: 64rem) {
         body {
-          overflow: auto;
+          overflow: hidden;
+        }
+        .view {
+          overflow-y: auto;
         }
         .audio-grid,
         .wp-grid {
           grid-template-columns: 1fr;
+        }
+        .mode {
+          padding: 0.625rem 1rem 0.75rem;
+        }
+        .mode svg {
+          margin-bottom: 0.25rem;
+        }
+        .wp-grid {
+          flex: none;
+        }
+        .wp-left {
+          height: 44rem;
+        }
+        .wp-grid > .card {
+          min-height: 30rem;
         }
         .hero .clock {
           font-size: 4.5rem;
