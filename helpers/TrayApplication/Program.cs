@@ -66,6 +66,10 @@ internal sealed class DashboardPopup : Form
     private const int DwmWindowCornerPreferenceRound = 2;
     private const int WsBorder = 0x00800000;
     private const int CsDropShadow = 0x00020000;
+    private const int PopupAnimationDuration = 140;
+    private const int AwHide = 0x00010000;
+    private const int AwActivate = 0x00020000;
+    private const int AwBlend = 0x00080000;
     private readonly WebView2 browser = new() { Dock = DockStyle.Fill };
     private readonly string url;
     private bool suppressNextDeactivate;
@@ -112,21 +116,20 @@ internal sealed class DashboardPopup : Form
             return;
         }
 
-        Hide();
+        HideWithAnimation();
     }
 
     public async void Toggle()
     {
         if (Visible)
         {
-            Hide();
+            HideWithAnimation();
             return;
         }
 
         var area = Screen.FromPoint(Cursor.Position).WorkingArea;
         Location = new Point(area.Right - Width - PopupMargin, area.Bottom - Height - PopupMargin);
-        Show();
-        Activate();
+        ShowWithAnimation();
 
         if (browser.Source is null)
         {
@@ -142,4 +145,17 @@ internal sealed class DashboardPopup : Form
         ref int value,
         int valueSize
     );
+
+    [DllImport("user32.dll")]
+    private static extern bool AnimateWindow(IntPtr handle, int duration, int flags);
+
+    private void ShowWithAnimation()
+    {
+        if (!AnimateWindow(Handle, PopupAnimationDuration, AwActivate | AwBlend)) Show();
+    }
+
+    private void HideWithAnimation()
+    {
+        if (!AnimateWindow(Handle, PopupAnimationDuration, AwHide | AwBlend)) Hide();
+    }
 }
