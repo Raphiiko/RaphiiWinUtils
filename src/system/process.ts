@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 
 export interface CommandResult {
   code: number | null;
@@ -9,14 +9,21 @@ export interface CommandResult {
 export async function runCommand(
   command: string,
   args: string[],
-  options: { cwd?: string; timeoutMs?: number; windowsHide?: boolean } = {}
+  options: { cwd?: string; timeoutMs?: number; windowsHide?: boolean; input?: string } = {}
 ): Promise<CommandResult> {
   return await new Promise<CommandResult>((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
       windowsHide: options.windowsHide ?? true,
-      stdio: ["ignore", "pipe", "pipe"]
-    });
+      stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"]
+      // stdout and stderr are always pipes; only stdin varies, and it is used defensively below.
+    }) as ChildProcessWithoutNullStreams;
+
+    if (options.input !== undefined) {
+      // Write errors surface through the exit code and stderr; a closed stdin must not throw here.
+      child.stdin?.on("error", () => {});
+      child.stdin?.end(options.input, "utf8");
+    }
 
     let stdout = "";
     let stderr = "";
@@ -81,7 +88,7 @@ export async function launchDetached(
 export async function requireSuccess(
   command: string,
   args: string[],
-  options: { cwd?: string; timeoutMs?: number; windowsHide?: boolean } = {}
+  options: { cwd?: string; timeoutMs?: number; windowsHide?: boolean; input?: string } = {}
 ): Promise<CommandResult> {
   const result = await runCommand(command, args, options);
   if (result.code !== 0) {

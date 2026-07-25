@@ -63,17 +63,72 @@ It also:
 - registers the Windows notification identity
 - installs a local `pre-push` Git hook that starts a background watcher; Git has no native `post-push` hook, so the watcher waits for `git push` to exit before asking the running app to check for updates
 
+## Dashboard
+
+Open <http://127.0.0.1:17642/> for the local dashboard — a dark "ambient ops" panel sized for both
+desktop and VR overlay use (large touch targets throughout). It has three views:
+
+- **Home** (default): clock, service status, and tool tiles.
+- **Audio**: one-tap output routing between the configured audio modes (active mode highlighted),
+  and per-channel volume with −/+ steppers and a full-width tap-or-drag level track.
+- **Wallpapers**: the wallpaper manager below.
+
+## Wallpaper Manager
+
+Open <http://127.0.0.1:17642/#wallpapers> for the wallpaper view of the dashboard. It renders the real monitor layout (positions and
+native resolutions straight from the shell's `IDesktopWallpaper`), lets you pick a library image per
+monitor, crop it in that monitor's aspect ratio, and apply.
+
+Applying pre-crops each image to its monitor's native resolution and sets it once through the
+Windows API. Nothing renders or loops afterwards. Crops are content-addressed in a cache directory,
+so re-applying the same preset reuses the existing files and is a no-op on disk.
+
+Files live outside the repo:
+
+```text
+%APPDATA%\RaphiiWinUtils\wallpapers\library\    uploaded images
+%APPDATA%\RaphiiWinUtils\wallpapers\cache\      cropped per-monitor output
+%APPDATA%\RaphiiWinUtils\wallpapers\presets.json
+%APPDATA%\RaphiiWinUtils\wallpapers\current.json
+```
+
+Every successful apply records what landed in `current.json`, and the dashboard opens on it — a refresh
+shows the configuration that is actually on the desktop, crops included, without needing a saved
+preset. Only monitors whose apply succeeded are recorded, and assignments whose monitor or image has
+since disappeared are dropped on load rather than shown as set.
+
+Windows-native work lives in the `WallpaperHelper` C# helper (`npm run build:helper:wallpaper`).
+A preset stores monitor device paths; assignments for monitors that are not currently connected are
+reported and skipped rather than failing the apply.
+
+Each monitor is listed with its EDID name and connector (from `QueryDisplayConfig`), because several
+identical panels legitimately report the same name. A daisy-chained monitor can show up as a second
+fully active display with its own desktop area — Windows reports it as real, so it cannot be detected
+and dropped. Use **Hide** on that row instead; the choice persists in
+`%APPDATA%\RaphiiWinUtils\wallpapers\hidden-monitors.json` and hidden monitors are skipped on apply
+even if an old preset still targets them.
+
 ## Local Control API
 
 The app exposes a localhost-only Elysia API:
 
 ```text
+GET  http://127.0.0.1:17642/               dashboard UI
 GET  http://127.0.0.1:17642/health
 POST http://127.0.0.1:17642/update/check
 GET  http://127.0.0.1:17642/audio/modes
 POST http://127.0.0.1:17642/audio/modes/:id
 GET  http://127.0.0.1:17642/audio/volumes
 POST http://127.0.0.1:17642/audio/volumes/:name
+GET  http://127.0.0.1:17642/api/wallpaper/monitors
+PUT  http://127.0.0.1:17642/api/wallpaper/hidden
+GET  http://127.0.0.1:17642/api/wallpaper/library
+GET  http://127.0.0.1:17642/api/wallpaper/library/:file
+POST http://127.0.0.1:17642/api/wallpaper/library?name=<file>   raw image bytes
+GET  http://127.0.0.1:17642/api/wallpaper/current
+GET  http://127.0.0.1:17642/api/wallpaper/presets
+PUT  http://127.0.0.1:17642/api/wallpaper/presets/:name
+POST http://127.0.0.1:17642/api/wallpaper/apply
 ```
 
 The `POST /update/check` route queues one self-update check. If a check is already running it returns `409` and leaves the running check alone.

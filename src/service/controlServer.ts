@@ -1,6 +1,11 @@
 import { Elysia } from "elysia";
 import { node } from "@elysiajs/node";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { ControlConfig } from "../config/schema.ts";
+import { wallpaperRoutes } from "../wallpaper/wallpaperRoutes.ts";
+import { WallpaperService } from "../wallpaper/wallpaperService.ts";
+import { FileAudioMqttStateStore } from "../mqtt/audioMqttStateStore.ts";
 import { Logger } from "../system/logger.ts";
 import { AudioModeService, UnknownAudioModeError } from "./audioModeService.ts";
 import {
@@ -16,6 +21,7 @@ export class ControlServer {
   private readonly updater: Updater;
   private readonly audioModes: AudioModeService;
   private readonly channelVolumes: ChannelVolumeService;
+  private readonly logger: Logger;
   private app?: { stop: () => unknown };
 
   constructor(
@@ -29,6 +35,7 @@ export class ControlServer {
     this.updater = updater;
     this.audioModes = audioModes;
     this.channelVolumes = channelVolumes;
+    this.logger = logger;
     this.log = logger.child("control");
   }
 
@@ -39,6 +46,15 @@ export class ControlServer {
     }
 
     this.app = new Elysia({ adapter: node() })
+      .use(wallpaperRoutes(new WallpaperService(this.logger), this.logger))
+      // Dashboard shell. Read per request so editing the page needs no restart; it is one small
+      // file on localhost.
+      .get("/", async () => {
+        const path = join(import.meta.dirname, "..", "web", "dashboard.html");
+        return new Response(await readFile(path, "utf8"), {
+          headers: { "content-type": "text/html; charset=utf-8" }
+        });
+      })
       .get("/health", () => ({
         ok: true,
         service: "RaphiiWinUtils",
@@ -52,8 +68,11 @@ export class ControlServer {
           updater: this.updater.getStatus()
         };
       })
-      .get("/audio/modes", () => ({
-        modes: this.audioModes.listModes()
+      .get("/audio/modes", async () => ({
+        modes: this.audioModes.listModes(),
+        // The confirmed mode is persisted by the MQTT sync; reading the same file keeps the
+        // dashboard honest without new plumbing.
+        active: (await new FileAudioMqttStateStore().load()).mode ?? null
       }))
       .get("/audio/volumes", () => ({
         channels: this.channelVolumes.listStates().map((state) => ({
