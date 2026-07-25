@@ -4,6 +4,7 @@ import { ClipboardAutomationService } from "../service/clipboardAutomationServic
 import { AudioModeService } from "../service/audioModeService.ts";
 import { ChannelVolumeService } from "../service/channelVolumeService.ts";
 import { ControlServer } from "../service/controlServer.ts";
+import { TrayApplication } from "../service/trayApplication.ts";
 import { Updater } from "../service/updater.ts";
 import { XsOverlayRecoveryService } from "../service/xsOverlayRecoveryService.ts";
 import { VrChatRecoveryService } from "../service/vrChatRecoveryService.ts";
@@ -44,6 +45,7 @@ export function createServiceModules(
     channelVolumeService,
     logger
   );
+  const trayApplication = new TrayApplication(config.control, logger);
   const clipboardAutomationService = new ClipboardAutomationService(config.clipboard, logger);
   const xsOverlayRecoveryService = new XsOverlayRecoveryService(
     config.xsOverlayRecovery,
@@ -66,6 +68,7 @@ export function createServiceModules(
         audioModeService.stop();
       }
     }),
+    serviceModule("tray", trayApplication),
     serviceModule("clipboard-automations", clipboardAutomationService),
     serviceModule("xsoverlay-recovery", xsOverlayRecoveryService)
   ];
