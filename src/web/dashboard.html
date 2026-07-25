@@ -884,11 +884,35 @@
         gap: 0.5rem;
       }
       .preset {
+        position: relative;
+        overflow: hidden;
         width: 100%;
         display: flex;
         align-items: center;
         gap: 0.5rem;
         text-align: left;
+      }
+      .preset-preview {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        display: flex;
+        opacity: 0.22;
+        pointer-events: none;
+      }
+      .preset-preview::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(90deg, var(--glass) 5%, transparent 60%, var(--glass) 100%);
+      }
+      .preset-preview img {
+        flex: 1;
+        object-fit: cover;
+      }
+      .preset > :not(.preset-preview) {
+        position: relative;
+        z-index: 1;
       }
       .preset .grow {
         flex: 1;
@@ -981,6 +1005,17 @@
       }
       #savePop::backdrop {
         background: transparent;
+      }
+      .save-fields {
+        display: grid;
+        gap: 0.625rem;
+        min-width: 17rem;
+      }
+      .save-fields label {
+        display: grid;
+        gap: 0.25rem;
+        font-size: 0.75rem;
+        color: var(--dim);
       }
       .row {
         display: flex;
@@ -1166,9 +1201,23 @@
         </div>
 
         <div id="savePop" popover>
-          <div class="row" style="flex-wrap: nowrap">
-            <input class="input" id="presetName" placeholder="Preset name" style="width: 13rem" />
-            <button class="btn btn-primary" id="savePreset">Save</button>
+          <div class="save-fields">
+            <div class="card-label">Save preset</div>
+            <label for="presetSaveMode">
+              Save to
+              <select class="select" id="presetSaveMode"></select>
+            </label>
+            <label id="presetNameField" for="presetName">
+              New preset name
+              <input class="input" id="presetName" placeholder="Preset name" />
+            </label>
+            <label id="presetOverwriteField" for="presetOverwriteTarget" hidden>
+              Preset to overwrite
+              <select class="select" id="presetOverwriteTarget"></select>
+            </label>
+            <div class="row">
+              <button class="btn btn-primary" id="savePreset">Save preset</button>
+            </div>
           </div>
         </div>
 
@@ -1844,6 +1893,18 @@
           button.type = "button";
           button.className = "btn preset";
           button.setAttribute("aria-pressed", String(name === state.loadedPreset));
+          const preview = document.createElement("span");
+          preview.className = "preset-preview";
+          for (const file of [...new Set(preset.map((assignment) => assignment.file))].slice(
+            0,
+            3
+          )) {
+            const image = document.createElement("img");
+            image.src = imageUrl(file);
+            image.alt = "";
+            image.loading = "lazy";
+            preview.append(image);
+          }
           const label = document.createElement("span");
           label.textContent = name;
           const grow = document.createElement("span");
@@ -1851,7 +1912,7 @@
           const meta = document.createElement("span");
           meta.className = "dim tnum";
           meta.textContent = `${preset.length} monitor${preset.length === 1 ? "" : "s"}`;
-          button.append(label, grow, meta);
+          button.append(preview, label, grow, meta);
           button.onclick = () => loadPreset(name);
           list.append(button);
         }
@@ -2153,14 +2214,13 @@
       };
 
       el("savePresetOpen").addEventListener("click", () => {
-        // Prefill with the loaded preset so "tweak and re-save" is two clicks.
-        el("presetName").value = state.loadedPreset;
-        setTimeout(() => el("presetName").focus(), 0);
+        configurePresetSave();
+        setTimeout(() => el("presetSaveMode").focus(), 0);
       });
 
       el("savePreset").onclick = async () => {
-        const name = el("presetName").value.trim();
-        if (!name) return say("Name the preset before saving it.", true);
+        const name = presetSaveTarget();
+        if (!name) return;
 
         try {
           await wp(`/presets/${encodeURIComponent(name)}`, {
@@ -2176,6 +2236,47 @@
           say(error.message, true);
         }
       };
+
+      function configurePresetSave() {
+        const mode = el("presetSaveMode");
+        const target = el("presetOverwriteTarget");
+        const names = Object.keys(state.presets).sort();
+        const otherNames = names.filter((name) => name !== state.loadedPreset);
+        mode.replaceChildren(new Option("Save as new preset", "new"));
+        if (state.loadedPreset && state.presets[state.loadedPreset]) {
+          mode.append(new Option(`Overwrite “${state.loadedPreset}”`, "current"));
+        }
+        if (otherNames.length > 0) mode.append(new Option("Overwrite another preset", "other"));
+        mode.value = state.loadedPreset && state.presets[state.loadedPreset] ? "current" : "new";
+        target.replaceChildren(...otherNames.map((name) => new Option(name, name)));
+        el("presetName").value = "";
+        updatePresetSaveFields();
+      }
+
+      function updatePresetSaveFields() {
+        const mode = el("presetSaveMode").value;
+        el("presetNameField").hidden = mode !== "new";
+        el("presetOverwriteField").hidden = mode !== "other";
+      }
+
+      function presetSaveTarget() {
+        const mode = el("presetSaveMode").value;
+        if (mode === "current") return state.loadedPreset;
+        if (mode === "other") return el("presetOverwriteTarget").value;
+
+        const name = el("presetName").value.trim();
+        if (!name) {
+          say("Name the new preset before saving it.", true);
+          return;
+        }
+        if (state.presets[name]) {
+          say(`“${name}” already exists. Choose an overwrite option instead.`, true);
+          return;
+        }
+        return name;
+      }
+
+      el("presetSaveMode").addEventListener("change", updatePresetSaveFields);
 
       // Choosing a preset loads it immediately — no separate Load button.
       async function loadPreset(name) {
