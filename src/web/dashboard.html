@@ -302,6 +302,21 @@
         border-radius: 0.625rem;
         font-size: 0.8125rem;
       }
+      .tray-expand {
+        border: 1px solid #8b9cf759;
+        background: linear-gradient(150deg, #111b35b8, #19284cc4);
+        box-shadow:
+          0 0 24px #8b9cf726,
+          inset 0 1px 0 #ffffff1a;
+      }
+      .tray-expand:hover:not(:disabled) {
+        background: linear-gradient(150deg, #162446f0, #213565f0);
+        border-color: #8b9cf78c;
+      }
+      .tray-expand svg {
+        width: 1.1rem;
+        height: 1.1rem;
+      }
 
       .input,
       .select {
@@ -1201,6 +1216,28 @@
           <div class="date" id="date"></div>
         </div>
         <div class="home-chips">
+          <button
+            class="btn btn-sm tray-expand"
+            type="button"
+            data-open-browser
+            title="Open this dashboard in your browser"
+            hidden
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M14 5h5v5" />
+              <path d="M10 14 19 5" />
+              <path d="M19 14v5h-14v-14h5" />
+            </svg>
+            Open in browser
+          </button>
           <span class="chip"
             ><i id="healthDot"></i><span id="healthText">Checking service…</span></span
           >
@@ -1254,6 +1291,28 @@
           <h1>Audio</h1>
           <div class="chips">
             <span class="chip"><i id="audioHealthDot"></i><span id="audioHealthText">…</span></span>
+            <button
+              class="btn btn-sm tray-expand"
+              type="button"
+              data-open-browser
+              title="Open this dashboard in your browser"
+              aria-label="Open this dashboard in your browser"
+              hidden
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M14 5h5v5" />
+                <path d="M10 14 19 5" />
+                <path d="M19 14v5h-14v-14h5" />
+              </svg>
+            </button>
           </div>
         </div>
         <div class="audio-grid">
@@ -1274,6 +1333,28 @@
           <h1>Wallpapers</h1>
           <div class="chips">
             <span class="chip" id="assignedCount">0 of 0 set</span>
+            <button
+              class="btn btn-sm tray-expand"
+              type="button"
+              data-open-browser
+              title="Open this dashboard in your browser"
+              aria-label="Open this dashboard in your browser"
+              hidden
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M14 5h5v5" />
+                <path d="M10 14 19 5" />
+                <path d="M19 14v5h-14v-14h5" />
+              </svg>
+            </button>
             <button class="btn btn-primary" id="apply">
               <svg
                 viewBox="0 0 24 24"
@@ -1440,6 +1521,8 @@
         "#audio": "view-audio",
         "#wallpapers": "view-wallpapers"
       };
+      const isTrayShell = new URLSearchParams(location.search).get("tray") === "1";
+      const expandBrowserButtons = [...document.querySelectorAll("[data-open-browser]")];
       function route() {
         const hash = views[location.hash] ? location.hash : "#home";
         for (const [key, id] of Object.entries(views)) {
@@ -1450,11 +1533,30 @@
         if (hash === "#audio") refreshAudio();
       }
       window.addEventListener("hashchange", route);
+      for (const button of expandBrowserButtons) button.hidden = !isTrayShell;
+      if (isTrayShell) {
+        for (const button of expandBrowserButtons) button.addEventListener("click", openInBrowser);
+      }
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState !== "visible") return;
         if (!el("view-home").hidden) refreshHome();
         if (!el("view-audio").hidden) refreshAudio();
       });
+
+      async function openInBrowser() {
+        for (const button of expandBrowserButtons) button.disabled = true;
+        try {
+          await postJson("/dashboard/open-browser", {
+            hash: views[location.hash] ? location.hash : "#home"
+          });
+        } catch (error) {
+          say(error.message, true);
+        } finally {
+          setTimeout(() => {
+            for (const button of expandBrowserButtons) button.disabled = false;
+          }, 250);
+        }
+      }
 
       /* ================= Home ================= */
       function tickClock() {

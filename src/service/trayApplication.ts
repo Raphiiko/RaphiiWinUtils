@@ -18,12 +18,14 @@ export class TrayApplication {
     if (!this.config.enabled) return;
 
     const executable = getTrayApplicationPath();
+    const url = new URL(`http://${this.config.host}:${this.config.port}`);
+    url.searchParams.set("tray", "1");
     if (!existsSync(executable)) {
       this.log.warn("Tray helper is not built", { executable });
       return;
     }
 
-    this.process = spawn(executable, [`http://${this.config.host}:${this.config.port}`], {
+    this.process = spawn(executable, [url.toString()], {
       windowsHide: true,
       stdio: "ignore"
     });

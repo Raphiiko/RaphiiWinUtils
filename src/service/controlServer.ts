@@ -3,6 +3,7 @@ import { node } from "@elysiajs/node";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ControlConfig } from "../config/schema.ts";
+import { launchDetached } from "../system/process.ts";
 import { wallpaperRoutes } from "../wallpaper/wallpaperRoutes.ts";
 import { WallpaperService } from "../wallpaper/wallpaperService.ts";
 import { FileAudioMqttStateStore } from "../mqtt/audioMqttStateStore.ts";
@@ -16,6 +17,7 @@ import {
 import type { Updater } from "./updater.ts";
 
 export class ControlServer {
+  private static readonly dashboardHashes = new Set(["#home", "#audio", "#wallpapers"]);
   private readonly log: Logger;
   private readonly config: ControlConfig;
   private readonly updater: Updater;
@@ -68,6 +70,25 @@ export class ControlServer {
           updater: this.updater.getStatus()
         };
       })
+      .post(
+        "/dashboard/open-browser",
+        async ({ body, set }) => {
+          try {
+            await this.openDashboardInBrowser(body.hash);
+            set.status = 202;
+            return { accepted: true };
+          } catch (error) {
+            set.status = 500;
+            this.log.error("Failed to open dashboard in browser", { error: String(error) });
+            return { accepted: false, error: "Failed to open dashboard in browser" };
+          }
+        },
+        {
+          body: t.Object({
+            hash: t.Optional(t.String())
+          })
+        }
+      )
       .get("/audio/modes", async () => ({
         modes: this.audioModes.listModes(),
         // The confirmed mode is persisted by the MQTT sync; reading the same file keeps the
@@ -184,5 +205,14 @@ export class ControlServer {
   stop(): void {
     this.app?.stop();
     this.app = undefined;
+  }
+
+  private async openDashboardInBrowser(hash?: string): Promise<void> {
+    const url = new URL(`http://${this.config.host}:${this.config.port}/`);
+    const safeHash = hash && ControlServer.dashboardHashes.has(hash) ? hash : "#home";
+    url.hash = safeHash;
+    await launchDetached("cmd.exe", ["/c", "start", "", url.toString()], {
+      windowsHide: true
+    });
   }
 }
