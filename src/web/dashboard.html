@@ -679,10 +679,10 @@
         gap: 1.125rem;
         min-height: 0;
       }
-      .wp-left .card:first-child {
+      .monitors-card {
         flex: none;
       }
-      .wp-left .card:last-child {
+      .library-card {
         flex: 1;
       }
       #layout {
@@ -1086,7 +1086,7 @@
         .wp-left {
           height: auto;
         }
-        .wp-left .card:last-child {
+        .library-card {
           flex: none;
         }
         .wp-grid > .card {
@@ -1138,13 +1138,8 @@
         .editor-head > button {
           margin-left: auto;
         }
-        #cropStage {
-          align-self: stretch;
-        }
         #cropStage img {
-          width: 100%;
           max-height: min(22rem, 32dvh);
-          object-fit: contain;
         }
         .slider {
           width: min(100%, 14rem);
@@ -1425,16 +1420,7 @@
 
         <div class="wp-grid">
           <div class="wp-left">
-            <section class="card">
-              <div class="card-label">Monitors</div>
-              <div id="layout"><p class="dim">Reading your display layout…</p></div>
-              <details class="roster-fold">
-                <summary>Manage monitors</summary>
-                <div class="roster" id="roster"></div>
-              </details>
-            </section>
-
-            <section class="card drop-target" id="dropzone">
+            <section class="card drop-target library-card" id="dropzone">
               <div class="library-head">
                 <div class="card-label">Library</div>
                 <div class="grow"></div>
@@ -1443,7 +1429,7 @@
                     class="btn btn-ghost btn-sm library-tab"
                     id="imagesTab"
                     role="tab"
-                    aria-selected="true"
+                    aria-selected="false"
                   >
                     Images
                   </button>
@@ -1451,12 +1437,12 @@
                     class="btn btn-ghost btn-sm library-tab"
                     id="presetsTab"
                     role="tab"
-                    aria-selected="false"
+                    aria-selected="true"
                   >
                     Presets
                   </button>
                 </div>
-                <label class="btn btn-sm" id="addImages" for="upload">
+                <label class="btn btn-sm" id="addImages" for="upload" hidden>
                   Add images
                   <input
                     type="file"
@@ -1466,14 +1452,23 @@
                     multiple
                   />
                 </label>
-                <button class="btn btn-sm" id="savePresetOpen" popovertarget="savePop" hidden>
+                <button class="btn btn-sm" id="savePresetOpen" popovertarget="savePop">
                   Save preset
                 </button>
               </div>
               <div class="library-scroll overlay-scroll">
-                <div id="library"></div>
-                <div id="presets" hidden></div>
+                <div id="library" hidden></div>
+                <div id="presets"></div>
               </div>
+            </section>
+
+            <section class="card monitors-card">
+              <div class="card-label">Monitors</div>
+              <div id="layout"><p class="dim">Reading your display layout…</p></div>
+              <details class="roster-fold">
+                <summary>Manage monitors</summary>
+                <div class="roster" id="roster"></div>
+              </details>
             </section>
           </div>
 
@@ -1513,7 +1508,7 @@
         assignments: {},
         sizes: {},
         presets: {},
-        libraryTab: "images",
+        libraryTab: "presets",
         loadedPreset: "",
         activeMode: null,
         modes: []
