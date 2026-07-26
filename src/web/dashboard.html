@@ -86,6 +86,27 @@
         clip-path: inset(50%);
         white-space: nowrap;
       }
+      .overlay-scroll {
+        scrollbar-width: thin;
+        scrollbar-color: #cdd6f433 transparent;
+      }
+      .overlay-scroll::-webkit-scrollbar {
+        width: 0.625rem;
+        height: 0.625rem;
+      }
+      .overlay-scroll::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      .overlay-scroll::-webkit-scrollbar-thumb {
+        border: 0.1875rem solid transparent;
+        border-radius: 999px;
+        background: #cdd6f433;
+        background-clip: padding-box;
+      }
+      .overlay-scroll::-webkit-scrollbar-thumb:hover {
+        background: #cdd6f455;
+        background-clip: padding-box;
+      }
 
       /* ============ Rail ============ */
       .rail {
@@ -169,12 +190,6 @@
         font-size: 1.625rem;
         font-weight: 250;
         letter-spacing: 0.02em;
-      }
-      .view-head .pc {
-        font-family: Georgia, serif;
-        font-style: italic;
-        font-size: 1.05rem;
-        color: var(--dim);
       }
       .view-head .chips {
         margin-left: auto;
@@ -386,17 +401,6 @@
       .hero .date {
         font-size: 1.0625rem;
         color: var(--dim);
-      }
-      .hero .who {
-        margin-top: 0.875rem;
-        font-family: Georgia, serif;
-        font-style: italic;
-        font-size: 1.125rem;
-        color: var(--dim);
-      }
-      .hero .who b {
-        color: var(--text);
-        font-weight: 550;
       }
       .home-chips {
         display: flex;
@@ -1130,11 +1134,10 @@
 
     <main>
       <!-- ============ Home ============ -->
-      <section class="view" id="view-home">
+      <section class="view overlay-scroll" id="view-home">
         <div class="hero">
           <div class="clock tnum" id="clock">--:--</div>
           <div class="date" id="date"></div>
-          <div class="who">on <b>Shirakami</b></div>
         </div>
         <div class="home-chips">
           <span class="chip"
@@ -1185,10 +1188,9 @@
       </section>
 
       <!-- ============ Audio ============ -->
-      <section class="view" id="view-audio" hidden>
+      <section class="view overlay-scroll" id="view-audio" hidden>
         <div class="view-head">
           <h1>Audio</h1>
-          <span class="pc">on Shirakami</span>
           <div class="chips">
             <span class="chip"><i id="audioHealthDot"></i><span id="audioHealthText">…</span></span>
           </div>
@@ -1206,10 +1208,9 @@
       </section>
 
       <!-- ============ Wallpapers ============ -->
-      <section class="view" id="view-wallpapers" hidden>
+      <section class="view overlay-scroll" id="view-wallpapers" hidden>
         <div class="view-head">
           <h1>Wallpapers</h1>
-          <span class="pc">on Shirakami</span>
           <div class="chips">
             <span class="chip" id="assignedCount">0 of 0 set</span>
             <button class="btn btn-primary" id="apply">
@@ -1297,7 +1298,7 @@
                   Save preset
                 </button>
               </div>
-              <div class="library-scroll">
+              <div class="library-scroll overlay-scroll">
                 <div id="library"></div>
                 <div id="presets" hidden></div>
               </div>
@@ -1305,7 +1306,7 @@
           </div>
 
           <section class="card">
-            <div class="editor-body" id="editorBody">
+            <div class="editor-body overlay-scroll" id="editorBody">
               <div class="editor-empty">Pick a monitor, then an image.</div>
             </div>
           </section>

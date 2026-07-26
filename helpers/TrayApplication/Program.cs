@@ -135,6 +135,9 @@ internal sealed class DashboardPopup : Form
             return;
         }
 
+        await browserInitialization;
+        await ResetToHomeAsync();
+
         var area = Screen.FromPoint(Cursor.Position).WorkingArea;
         Size = new Size(
             Math.Min(PopupWidth, area.Width - PopupMargin * 2),
@@ -142,7 +145,6 @@ internal sealed class DashboardPopup : Form
         );
         Location = new Point(area.Right - Width - PopupMargin, area.Bottom - Height - PopupMargin);
         ShowWithAnimation();
-        await browserInitialization;
     }
 
     [DllImport("dwmapi.dll")]
@@ -172,6 +174,13 @@ internal sealed class DashboardPopup : Form
     {
         await browser.EnsureCoreWebView2Async();
         browser.Source = new Uri(url);
+    }
+
+    private Task ResetToHomeAsync()
+    {
+        return browser.CoreWebView2.ExecuteScriptAsync(
+            "location.hash = '#home'; window.scrollTo(0, 0);"
+        );
     }
 
     private void StartAnimation(double targetOpacity, bool hideWhenComplete)
