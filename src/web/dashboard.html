@@ -1138,8 +1138,12 @@
         .editor-head > button {
           margin-left: auto;
         }
+        #cropStage {
+          align-self: stretch;
+        }
         #cropStage img {
-          max-height: min(22rem, 32dvh);
+          width: 100%;
+          max-height: none;
         }
         .slider {
           width: min(100%, 14rem);
@@ -1168,9 +1172,6 @@
         #library {
           grid-template-columns: repeat(auto-fill, minmax(6rem, 1fr));
           gap: 0.5rem;
-        }
-        #cropStage img {
-          max-height: min(18rem, 28dvh);
         }
       }
       @media (prefers-reduced-motion: reduce) {
@@ -1427,19 +1428,19 @@
                 <div class="library-tabs" role="tablist" aria-label="Library content">
                   <button
                     class="btn btn-ghost btn-sm library-tab"
-                    id="imagesTab"
-                    role="tab"
-                    aria-selected="false"
-                  >
-                    Images
-                  </button>
-                  <button
-                    class="btn btn-ghost btn-sm library-tab"
                     id="presetsTab"
                     role="tab"
                     aria-selected="true"
                   >
                     Presets
+                  </button>
+                  <button
+                    class="btn btn-ghost btn-sm library-tab"
+                    id="imagesTab"
+                    role="tab"
+                    aria-selected="false"
+                  >
+                    Images
                   </button>
                 </div>
                 <label class="btn btn-sm" id="addImages" for="upload" hidden>
