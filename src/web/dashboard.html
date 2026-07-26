@@ -317,6 +317,13 @@
         width: 1.1rem;
         height: 1.1rem;
       }
+      .rail .tray-expand {
+        width: 3rem;
+        height: 3rem;
+        margin-top: auto;
+        padding: 0;
+        border-radius: 1rem;
+      }
 
       .input,
       .select {
@@ -1160,7 +1167,8 @@
           width: 3.75rem;
           margin: 0.75rem 0 0.75rem 0.75rem;
         }
-        .rail a {
+        .rail a,
+        .rail .tray-expand {
           width: 2.625rem;
           height: 2.625rem;
         }
@@ -1237,6 +1245,28 @@
         </svg>
         <span class="sr-only">Wallpapers</span>
       </a>
+      <button
+        class="btn tray-expand"
+        type="button"
+        data-open-browser
+        title="Open this dashboard in your browser"
+        aria-label="Open this dashboard in your browser"
+        hidden
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M14 5h5v5" />
+          <path d="M10 14 19 5" />
+          <path d="M19 14v5h-14v-14h5" />
+        </svg>
+      </button>
     </nav>
 
     <main>
@@ -1247,28 +1277,6 @@
           <div class="date" id="date"></div>
         </div>
         <div class="home-chips">
-          <button
-            class="btn btn-sm tray-expand"
-            type="button"
-            data-open-browser
-            title="Open this dashboard in your browser"
-            hidden
-          >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M14 5h5v5" />
-              <path d="M10 14 19 5" />
-              <path d="M19 14v5h-14v-14h5" />
-            </svg>
-            Open in browser
-          </button>
           <span class="chip"
             ><i id="healthDot"></i><span id="healthText">Checking service…</span></span
           >
@@ -1322,28 +1330,6 @@
           <h1>Audio</h1>
           <div class="chips">
             <span class="chip"><i id="audioHealthDot"></i><span id="audioHealthText">…</span></span>
-            <button
-              class="btn btn-sm tray-expand"
-              type="button"
-              data-open-browser
-              title="Open this dashboard in your browser"
-              aria-label="Open this dashboard in your browser"
-              hidden
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M14 5h5v5" />
-                <path d="M10 14 19 5" />
-                <path d="M19 14v5h-14v-14h5" />
-              </svg>
-            </button>
           </div>
         </div>
         <div class="audio-grid">
@@ -1364,28 +1350,6 @@
           <h1>Wallpapers</h1>
           <div class="chips">
             <span class="chip" id="assignedCount">0 of 0 set</span>
-            <button
-              class="btn btn-sm tray-expand"
-              type="button"
-              data-open-browser
-              title="Open this dashboard in your browser"
-              aria-label="Open this dashboard in your browser"
-              hidden
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M14 5h5v5" />
-                <path d="M10 14 19 5" />
-                <path d="M19 14v5h-14v-14h5" />
-              </svg>
-            </button>
             <button class="btn btn-primary" id="apply">
               <svg
                 viewBox="0 0 24 24"
