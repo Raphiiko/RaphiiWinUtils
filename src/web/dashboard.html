@@ -1011,30 +1011,26 @@
         cursor: pointer;
       }
 
-      #savePop {
-        position: fixed;
-        margin: 0;
-        padding: 1rem;
-        border: 1px solid var(--edge-hi);
-        border-radius: 1.125rem;
-        background: #0d1426f2;
-        color: var(--text);
-        backdrop-filter: blur(20px);
-        box-shadow: 0 16px 40px #00000080;
-      }
-      #savePop::backdrop {
-        background: transparent;
-      }
-      .save-fields {
+      .preset-save {
         display: grid;
-        gap: 0.625rem;
-        min-width: 17rem;
+        grid-template-columns: minmax(10rem, 1fr) auto auto;
+        gap: 0.5rem;
+        align-items: end;
+        margin-bottom: 0.875rem;
+        padding: 0.75rem;
+        border: 1px solid var(--edge-hi);
+        border-radius: 0.875rem;
+        background: var(--glass);
       }
-      .save-fields label {
+      .preset-save label {
         display: grid;
         gap: 0.25rem;
-        font-size: 0.75rem;
+        min-width: 0;
         color: var(--dim);
+        font-size: 0.75rem;
+      }
+      .preset-save .input {
+        width: 100%;
       }
       .row {
         display: flex;
@@ -1120,6 +1116,12 @@
         }
         .library-scroll {
           max-height: 16rem;
+        }
+        .preset-save {
+          grid-template-columns: 1fr auto;
+        }
+        .preset-save label {
+          grid-column: 1 / -1;
         }
         .thumb .delete {
           opacity: 1;
@@ -1398,27 +1400,6 @@
           </div>
         </div>
 
-        <div id="savePop" popover>
-          <div class="save-fields">
-            <div class="card-label">Save preset</div>
-            <label for="presetSaveMode">
-              Save to
-              <select class="select" id="presetSaveMode"></select>
-            </label>
-            <label id="presetNameField" for="presetName">
-              New preset name
-              <input class="input" id="presetName" placeholder="Preset name" />
-            </label>
-            <label id="presetOverwriteField" for="presetOverwriteTarget" hidden>
-              Preset to overwrite
-              <select class="select" id="presetOverwriteTarget"></select>
-            </label>
-            <div class="row">
-              <button class="btn btn-primary" id="savePreset">Save preset</button>
-            </div>
-          </div>
-        </div>
-
         <div class="wp-grid">
           <div class="wp-left">
             <section class="card drop-target library-card" id="dropzone">
@@ -1453,10 +1434,18 @@
                     multiple
                   />
                 </label>
-                <button class="btn btn-sm" id="savePresetOpen" popovertarget="savePop">
+                <button class="btn btn-sm" id="savePresetOpen">
                   Save preset
                 </button>
               </div>
+              <form class="preset-save" id="presetSaveForm" hidden>
+                <label for="presetName">
+                  Preset name
+                  <input class="input" id="presetName" placeholder="e.g. RetroAlley" autocomplete="off" />
+                </label>
+                <button class="btn btn-primary" id="savePreset" type="submit">Save preset</button>
+                <button class="btn" id="cancelPresetSave" type="button">Cancel</button>
+              </form>
               <div class="library-scroll overlay-scroll">
                 <div id="library" hidden></div>
                 <div id="presets"></div>
@@ -2074,6 +2063,7 @@
         el("presetsTab").setAttribute("aria-selected", String(!imagesActive));
         el("addImages").hidden = !imagesActive;
         el("savePresetOpen").hidden = imagesActive;
+        if (imagesActive) el("presetSaveForm").hidden = true;
         if (!imagesActive) return renderPresets();
 
         grid.replaceChildren();
@@ -2479,12 +2469,23 @@
       };
 
       el("savePresetOpen").addEventListener("click", () => {
-        configurePresetSave();
-        setTimeout(() => el("presetSaveMode").focus(), 0);
+        const form = el("presetSaveForm");
+        form.hidden = false;
+        el("savePresetOpen").hidden = true;
+        el("presetName").value = state.loadedPreset;
+        updatePresetSaveAction();
+        el("presetName").focus();
+        el("presetName").select();
       });
 
-      el("savePreset").onclick = async () => {
-        const name = presetSaveTarget();
+      el("cancelPresetSave").onclick = () => {
+        el("presetSaveForm").hidden = true;
+        el("savePresetOpen").hidden = false;
+      };
+
+      el("presetSaveForm").onsubmit = async (event) => {
+        event.preventDefault();
+        const name = el("presetName").value.trim();
         if (!name) return;
 
         try {
@@ -2495,53 +2496,26 @@
           });
           state.loadedPreset = name;
           await refreshPresets();
-          el("savePop").hidePopover();
+          el("presetSaveForm").hidden = true;
+          el("savePresetOpen").hidden = false;
           say(`Saved "${name}".`);
         } catch (error) {
           say(error.message, true);
         }
       };
 
-      function configurePresetSave() {
-        const mode = el("presetSaveMode");
-        const target = el("presetOverwriteTarget");
-        const names = Object.keys(state.presets).sort();
-        const otherNames = names.filter((name) => name !== state.loadedPreset);
-        mode.replaceChildren(new Option("Save as new preset", "new"));
-        if (state.loadedPreset && state.presets[state.loadedPreset]) {
-          mode.append(new Option(`Overwrite “${state.loadedPreset}”`, "current"));
-        }
-        if (otherNames.length > 0) mode.append(new Option("Overwrite another preset", "other"));
-        mode.value = state.loadedPreset && state.presets[state.loadedPreset] ? "current" : "new";
-        target.replaceChildren(...otherNames.map((name) => new Option(name, name)));
-        el("presetName").value = "";
-        updatePresetSaveFields();
-      }
-
-      function updatePresetSaveFields() {
-        const mode = el("presetSaveMode").value;
-        el("presetNameField").hidden = mode !== "new";
-        el("presetOverwriteField").hidden = mode !== "other";
-      }
-
-      function presetSaveTarget() {
-        const mode = el("presetSaveMode").value;
-        if (mode === "current") return state.loadedPreset;
-        if (mode === "other") return el("presetOverwriteTarget").value;
-
+      function updatePresetSaveAction() {
         const name = el("presetName").value.trim();
-        if (!name) {
-          say("Name the new preset before saving it.", true);
-          return;
-        }
-        if (state.presets[name]) {
-          say(`“${name}” already exists. Choose an overwrite option instead.`, true);
-          return;
-        }
-        return name;
+        const save = el("savePreset");
+        save.disabled = !name;
+        save.textContent = !state.presets[name]
+          ? "Save new preset"
+          : name === state.loadedPreset
+            ? "Update preset"
+            : "Overwrite preset";
       }
 
-      el("presetSaveMode").addEventListener("change", updatePresetSaveFields);
+      el("presetName").addEventListener("input", updatePresetSaveAction);
 
       // Choosing a preset loads it immediately — no separate Load button.
       async function loadPreset(name) {
