@@ -135,6 +135,7 @@ export class ChannelVolumeService {
     await this.volumeController.apply([
       {
         endpointNameContains: channel.endpointNameContains,
+        endpointId: this.latestStates.get(channel.name)?.endpoint.id,
         volumePercent,
         mode: "set"
       }

@@ -198,75 +198,112 @@ internal sealed class EndpointWatcher : IDisposable
 
     private void ReadCommands()
     {
-        string? line;
-        while (!disposed && (line = Console.ReadLine()) is not null)
+        using var enumerator = new MMDeviceEnumerator();
+        var devicesByFilter = new Dictionary<string, MMDevice[]>(StringComparer.OrdinalIgnoreCase);
+        try
         {
-            string? requestId = null;
             try
             {
-                var command = JsonSerializer.Deserialize<VolumePolicyCommand>(line, new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                }) ?? throw new ArgumentException("Invalid audio endpoint command");
-                requestId = command.RequestId;
-                if (command.Type != "apply-volume-policy" || string.IsNullOrWhiteSpace(command.RequestId))
-                    throw new ArgumentException("Unknown audio endpoint command");
-                if (command.Mode != "set") throw new ArgumentException("Unsupported audio endpoint volume mode");
-
-                ApplyVolumePolicy(command);
+                foreach (var device in enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
+                    devicesByFilter[device.ID] = [device];
             }
             catch (Exception ex)
             {
-                Write(new { type = "volume-policy-result", requestId, error = ex.Message, results = Array.Empty<VolumePolicyResult>() });
+                Write(new { type = "error", message = $"Could not prewarm volume controls: {ex}" });
             }
+
+            string? line;
+            while (!disposed && (line = Console.ReadLine()) is not null)
+            {
+                string? requestId = null;
+                string? deviceKey = null;
+                try
+                {
+                    var command = JsonSerializer.Deserialize<VolumePolicyCommand>(line, new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    }) ?? throw new ArgumentException("Invalid audio endpoint command");
+                    requestId = command.RequestId;
+                    if (command.Type != "apply-volume-policy" || string.IsNullOrWhiteSpace(command.RequestId))
+                        throw new ArgumentException("Unknown audio endpoint command");
+                    if (command.Mode != "set") throw new ArgumentException("Unsupported audio endpoint volume mode");
+
+                    deviceKey = command.EndpointId ?? $"name:{command.EndpointNameContains}";
+                    if (!devicesByFilter.TryGetValue(deviceKey, out var devices))
+                    {
+                        devices = FindRenderDevices(
+                            enumerator,
+                            command.EndpointNameContains,
+                            command.EndpointId);
+                        if (devices.Length > 0) devicesByFilter[deviceKey] = devices;
+                    }
+                    ApplyVolumePolicy(command, devices);
+                }
+                catch (Exception ex)
+                {
+                    if (deviceKey is not null && devicesByFilter.Remove(deviceKey, out var staleDevices))
+                        foreach (var device in staleDevices)
+                            device.Dispose();
+                    Write(new { type = "volume-policy-result", requestId, error = ex.Message, results = Array.Empty<VolumePolicyResult>() });
+                }
+            }
+        }
+        finally
+        {
+            foreach (var devices in devicesByFilter.Values)
+                foreach (var device in devices)
+                    device.Dispose();
         }
     }
 
-    private void ApplyVolumePolicy(VolumePolicyCommand command)
+    private static MMDevice[] FindRenderDevices(
+        MMDeviceEnumerator enumerator,
+        string nameContains,
+        string? endpointId)
     {
-        VolumePolicyResult[] results;
-        lock (snapshotLock)
-        {
-            var matches = subscriptions.Values
-                .Where(subscription => subscription.Device.FriendlyName.Contains(
-                    command.EndpointNameContains,
-                    StringComparison.OrdinalIgnoreCase))
-                .ToArray();
-            if (matches.Length == 0)
-            {
-                results = [new VolumePolicyResult(
-                    command.EndpointNameContains,
-                    null,
-                    command.VolumePercent,
-                    command.Mode,
-                    false,
-                    false,
-                    null,
-                    null)];
-            }
-            else
-            {
-                var targetPercent = Math.Clamp(command.VolumePercent, 0, 100);
-                var targetScalar = targetPercent / 100f;
-                results = matches.Select(subscription =>
-                {
-                    var device = subscription.Device;
-                    var previousScalar = device.AudioEndpointVolume.MasterVolumeLevelScalar;
-                    var changed = Math.Abs(previousScalar - targetScalar) > 0.0001f;
-                    if (changed) device.AudioEndpointVolume.MasterVolumeLevelScalar = targetScalar;
-                    return new VolumePolicyResult(
-                        command.EndpointNameContains,
-                        device.FriendlyName,
-                        targetPercent,
-                        command.Mode,
-                        true,
-                        changed,
-                        (int)Math.Round(previousScalar * 100),
-                        device.AudioEndpointVolume.Mute);
-                }).ToArray();
-            }
-        }
+        if (!string.IsNullOrWhiteSpace(endpointId)) return [enumerator.GetDevice(endpointId)];
 
+        var devices = enumerator
+            .EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active)
+            .ToArray();
+        var matches = devices
+            .Where(device => device.FriendlyName.Contains(nameContains, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var matchIds = matches.Select(device => device.ID).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var device in devices)
+        {
+            if (!matchIds.Contains(device.ID)) device.Dispose();
+        }
+        return matches;
+    }
+
+    private void ApplyVolumePolicy(VolumePolicyCommand command, MMDevice[] devices)
+    {
+        var targetPercent = Math.Clamp(command.VolumePercent, 0, 100);
+        var targetScalar = targetPercent / 100f;
+        var results = devices.Length == 0
+            ? [new VolumePolicyResult(
+                command.EndpointNameContains,
+                null,
+                targetPercent,
+                command.Mode,
+                false,
+                false,
+                null,
+                null)]
+            : devices.Select(device =>
+            {
+                device.AudioEndpointVolume.MasterVolumeLevelScalar = targetScalar;
+                return new VolumePolicyResult(
+                    command.EndpointNameContains,
+                    null,
+                    targetPercent,
+                    command.Mode,
+                    true,
+                    true,
+                    null,
+                    null);
+            }).ToArray();
         Write(new { type = "volume-policy-result", command.RequestId, results });
     }
 
@@ -407,8 +444,6 @@ internal sealed class EndpointSubscription : IDisposable
         this.callback = callback;
     }
 
-    public MMDevice Device => device;
-
     public void Dispose()
     {
         try
@@ -477,5 +512,6 @@ internal sealed record VolumePolicyCommand(
     string Type,
     string RequestId,
     string EndpointNameContains,
+    string? EndpointId,
     int VolumePercent,
     string Mode);

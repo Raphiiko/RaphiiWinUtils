@@ -6,6 +6,7 @@ import { requireSuccess } from "../system/process.ts";
 
 export interface AudioEndpointVolumePolicy {
   endpointNameContains: string;
+  endpointId?: string;
   volumePercent: number;
   mode: "cap" | "set";
 }
@@ -69,31 +70,81 @@ export class WindowsAudioEndpointVolumeController implements AudioEndpointVolume
 }
 
 export class WatchedAudioEndpointVolumeController implements AudioEndpointVolumeController {
-  private readonly watcher: AudioEndpointWatcher;
+  private readonly watcher: Pick<AudioEndpointWatcher, "setVolume">;
+  private readonly pending = new Map<
+    string,
+    {
+      policy?: AudioEndpointVolumePolicy;
+      waiters: Array<{ resolve: () => void; reject: (error: unknown) => void }>;
+      running: boolean;
+    }
+  >();
 
-  constructor(watcher: AudioEndpointWatcher) {
+  constructor(watcher: Pick<AudioEndpointWatcher, "setVolume">) {
     this.watcher = watcher;
   }
 
   async apply(policies: AudioEndpointVolumePolicy[]): Promise<void> {
-    for (const policy of policies) {
-      if (policy.mode !== "set") {
-        throw new Error("The persistent audio watcher only supports set volume policies");
-      }
+    await Promise.all(policies.map((policy) => this.enqueue(policy)));
+  }
 
-      const results = await this.watcher.setVolume(
-        policy.endpointNameContains,
-        policy.volumePercent
+  private enqueue(policy: AudioEndpointVolumePolicy): Promise<void> {
+    if (policy.mode !== "set") {
+      return Promise.reject(
+        new Error("The persistent audio watcher only supports set volume policies")
       );
-      const missing = results.filter((entry) => !entry.found);
-      if (missing.length > 0) {
-        throw new Error(
-          `Audio endpoints not found: ${missing
-            .map((entry) => entry.endpointNameContains)
-            .join(", ")}`
+    }
+
+    let state = this.pending.get(policy.endpointNameContains);
+    if (!state) {
+      state = { waiters: [], running: false };
+      this.pending.set(policy.endpointNameContains, state);
+    }
+    state.policy = policy;
+
+    const completion = new Promise<void>((resolve, reject) => {
+      state.waiters.push({ resolve, reject });
+    });
+    if (!state.running) void this.drain(policy.endpointNameContains, state);
+    return completion;
+  }
+
+  private async drain(
+    endpointNameContains: string,
+    state: {
+      policy?: AudioEndpointVolumePolicy;
+      waiters: Array<{ resolve: () => void; reject: (error: unknown) => void }>;
+      running: boolean;
+    }
+  ): Promise<void> {
+    state.running = true;
+    while (state.policy) {
+      const policy = state.policy;
+      const waiters = state.waiters;
+      state.policy = undefined;
+      state.waiters = [];
+
+      try {
+        const results = await this.watcher.setVolume(
+          policy.endpointNameContains,
+          policy.volumePercent,
+          policy.endpointId
         );
+        const missing = results.filter((entry) => !entry.found);
+        if (missing.length > 0) {
+          throw new Error(
+            `Audio endpoints not found: ${missing
+              .map((entry) => entry.endpointNameContains)
+              .join(", ")}`
+          );
+        }
+        for (const waiter of waiters) waiter.resolve();
+      } catch (error) {
+        for (const waiter of waiters) waiter.reject(error);
       }
     }
+    state.running = false;
+    this.pending.delete(endpointNameContains);
   }
 }
 

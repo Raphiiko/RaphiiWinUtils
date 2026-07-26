@@ -185,7 +185,8 @@ export class AudioEndpointWatcher {
 
   setVolume(
     endpointNameContains: string,
-    volumePercent: number
+    volumePercent: number,
+    endpointId?: string
   ): Promise<AudioEndpointVolumePolicyResult[]> {
     const child = this.child;
     if (!child?.stdin.writable) {
@@ -197,6 +198,7 @@ export class AudioEndpointWatcher {
       type: "apply-volume-policy",
       requestId,
       endpointNameContains,
+      endpointId,
       volumePercent,
       mode: "set"
     });
@@ -205,7 +207,8 @@ export class AudioEndpointWatcher {
       const timeout = setTimeout(() => {
         this.pendingVolumeRequests.delete(requestId);
         reject(new Error("Audio endpoint volume command timed out"));
-      }, 2_000);
+        if (this.child === child) child.kill();
+      }, 10_000);
       this.pendingVolumeRequests.set(requestId, { resolve, reject, timeout });
       child.stdin.write(`${command}\n`, (error) => {
         if (!error) return;

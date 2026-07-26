@@ -1435,6 +1435,55 @@
       /* ================= Audio ================= */
       let audioTimer;
       let interacting = false;
+      let audioVolumeSocket;
+      let audioVolumeReconnectTimer;
+      let audioVolumeSequence = 0;
+      const pendingAudioVolumes = new Map();
+
+      function connectAudioVolumeSocket() {
+        if (
+          audioVolumeSocket?.readyState === WebSocket.OPEN ||
+          audioVolumeSocket?.readyState === WebSocket.CONNECTING
+        )
+          return;
+
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        const socket = new WebSocket(`${protocol}//${location.host}/audio/volumes/ws`);
+        audioVolumeSocket = socket;
+        socket.addEventListener("open", () => {
+          clearTimeout(audioVolumeReconnectTimer);
+          for (const command of pendingAudioVolumes.values()) {
+            socket.send(JSON.stringify(command));
+          }
+        });
+        socket.addEventListener("message", (event) => {
+          const message = JSON.parse(event.data);
+          const pending = pendingAudioVolumes.get(message.channel);
+          if (pending?.sequence !== message.sequence) return;
+          pendingAudioVolumes.delete(message.channel);
+          if (message.type === "volume-error") say(message.error, true);
+        });
+        socket.addEventListener("close", () => {
+          if (audioVolumeSocket === socket) audioVolumeSocket = undefined;
+          if (pendingAudioVolumes.size > 0) {
+            clearTimeout(audioVolumeReconnectTimer);
+            audioVolumeReconnectTimer = setTimeout(connectAudioVolumeSocket, 250);
+          }
+        });
+      }
+
+      function sendAudioVolume(channel, volumePercent) {
+        const command = {
+          channel,
+          volumePercent,
+          sequence: ++audioVolumeSequence
+        };
+        pendingAudioVolumes.set(channel, command);
+        connectAudioVolumeSocket();
+        if (audioVolumeSocket?.readyState === WebSocket.OPEN) {
+          audioVolumeSocket.send(JSON.stringify(command));
+        }
+      }
 
       async function refreshAudio() {
         clearTimeout(audioTimer);
@@ -1567,24 +1616,13 @@
           };
           paint();
 
-          let sendTimer;
-          let lastSentAt = 0;
+          let sendFrame;
           const send = () => {
-            if (sendTimer) return;
-            sendTimer = setTimeout(
-              async () => {
-                sendTimer = undefined;
-                lastSentAt = performance.now();
-                try {
-                  await postJson(`/audio/volumes/${encodeURIComponent(channel.name)}`, {
-                    volumePercent: volume
-                  });
-                } catch (error) {
-                  say(error.message, true);
-                }
-              },
-              Math.max(0, 16 - (performance.now() - lastSentAt))
-            );
+            if (sendFrame) return;
+            sendFrame = requestAnimationFrame(() => {
+              sendFrame = undefined;
+              sendAudioVolume(channel.name, volume);
+            });
           };
           const setVolume = (next) => {
             volume = Math.max(0, Math.min(100, Math.round(next)));

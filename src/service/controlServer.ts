@@ -1,4 +1,4 @@
-import { Elysia } from "elysia";
+import { Elysia, t } from "elysia";
 import { node } from "@elysiajs/node";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -81,6 +81,51 @@ export class ControlServer {
           muted: state.muted
         }))
       }))
+      .ws("/audio/volumes/ws", {
+        parse: (_ws, message) =>
+          typeof message === "string"
+            ? (JSON.parse(message) as {
+                channel: string;
+                volumePercent: number;
+                sequence: number;
+              })
+            : (message as { channel: string; volumePercent: number; sequence: number }),
+        body: t.Object({
+          channel: t.String(),
+          volumePercent: t.Integer({ minimum: 0, maximum: 100 }),
+          sequence: t.Integer({ minimum: 0 })
+        }),
+        message: async (ws, message) => {
+          try {
+            await this.channelVolumes.setVolume(message.channel, message.volumePercent);
+            ws.send(
+              JSON.stringify({
+                type: "volume-applied",
+                channel: message.channel,
+                volumePercent: message.volumePercent,
+                sequence: message.sequence
+              })
+            );
+          } catch (error) {
+            this.log.error("Failed to set streamed audio channel volume", {
+              channel: message.channel,
+              error: String(error)
+            });
+            ws.send(
+              JSON.stringify({
+                type: "volume-error",
+                channel: message.channel,
+                sequence: message.sequence,
+                error:
+                  error instanceof UnknownAudioChannelError ||
+                  error instanceof InvalidAudioVolumeError
+                    ? error.message
+                    : "Failed to set audio channel volume"
+              })
+            );
+          }
+        }
+      })
       .post("/audio/modes/:id", async ({ params, set }) => {
         try {
           const mode = await this.audioModes.applyMode(params.id);
