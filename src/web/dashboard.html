@@ -1084,10 +1084,14 @@
           flex: none;
         }
         .wp-left {
-          height: min(44rem, 65dvh);
+          height: auto;
+        }
+        .wp-left .card:last-child {
+          flex: none;
         }
         .wp-grid > .card {
-          min-height: min(30rem, 46dvh);
+          min-height: 0;
+          max-height: min(28rem, 42dvh);
         }
         .hero .clock {
           font-size: 4.5rem;
@@ -1120,6 +1124,32 @@
         .thumb .delete {
           opacity: 1;
         }
+        .editor-head {
+          flex-wrap: wrap;
+          align-items: flex-start;
+        }
+        .editor-head .title {
+          width: 100%;
+        }
+        .editor-head .dim {
+          flex: 1 1 14rem;
+        }
+        .editor-head > span[style],
+        .editor-head > button {
+          margin-left: auto;
+        }
+        #cropStage {
+          align-self: stretch;
+        }
+        #cropStage img {
+          width: 100%;
+          max-height: min(22rem, 32dvh);
+          object-fit: contain;
+        }
+        .slider {
+          width: min(100%, 14rem);
+          flex: 1 1 12rem;
+        }
       }
       @media (max-width: 40rem) {
         .rail {
@@ -1145,7 +1175,7 @@
           gap: 0.5rem;
         }
         #cropStage img {
-          max-height: min(22rem, calc(100dvh - 18rem));
+          max-height: min(18rem, 28dvh);
         }
       }
       @media (prefers-reduced-motion: reduce) {
