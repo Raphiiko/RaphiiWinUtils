@@ -261,16 +261,19 @@ async function installPushUpdateHook(config: AppConfig, log: Logger): Promise<vo
     ).stdout.trim();
     const absoluteHookPath = isAbsolute(hookPath) ? hookPath : join(process.cwd(), hookPath);
     const endpoint = `http://${config.control.host}:${config.control.port}/update/check`;
+    const watcherName = "raphii-update-after-push.ps1";
+    const watcherPath = join(dirname(absoluteHookPath), watcherName);
     const begin = "# BEGIN RaphiiWinUtils update check";
     const end = "# END RaphiiWinUtils update check";
     const block = [
       begin,
       "# Git has no client-side post-push hook, so pre-push starts a background process that waits for this git push to exit.",
-      `RAPHII_GIT_PUSH_PID="$PPID" powershell.exe -NoProfile -ExecutionPolicy Bypass -Command 'Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-Command","try { Wait-Process -Id $env:RAPHII_GIT_PUSH_PID -ErrorAction SilentlyContinue } catch { }; Start-Sleep -Seconds 3; try { Invoke-RestMethod -Method Post -Uri ${endpoint} | Out-Null } catch { }") -WindowStyle Hidden'`,
+      `powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$(dirname "$0")/${watcherName}" "$PPID" >/dev/null 2>&1 &`,
       end
     ].join("\n");
 
     mkdirSync(dirname(absoluteHookPath), { recursive: true });
+    writeFileSync(watcherPath, buildPushUpdateWatcherScript(endpoint), "utf8");
     const existing = existsSync(absoluteHookPath)
       ? readFileSync(absoluteHookPath, "utf8")
       : "#!/bin/sh\n";
@@ -287,6 +290,16 @@ async function installPushUpdateHook(config: AppConfig, log: Logger): Promise<vo
   } catch (error) {
     log.warn("Could not install push update hook", { error: String(error) });
   }
+}
+
+export function buildPushUpdateWatcherScript(endpoint: string): string {
+  return [
+    "param([int]$GitPushPid)",
+    "try { Wait-Process -Id $GitPushPid -ErrorAction SilentlyContinue } catch { }",
+    "Start-Sleep -Seconds 3",
+    `try { Invoke-RestMethod -Method Post -Uri '${ps(endpoint)}' | Out-Null } catch { }`,
+    ""
+  ].join("\r\n");
 }
 
 function removeManagedPostPushHook(log: Logger): void {

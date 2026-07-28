@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildLogonTaskRegistrationScript,
+  buildPushUpdateWatcherScript,
   buildVrCleanupTaskRegistrationScript
 } from "./installer.ts";
 
@@ -27,4 +28,12 @@ void test("registers a fixed-purpose elevated VR cleanup task", () => {
   assert.match(script, /taskkill\.exe/);
   assert.match(script, /RunLevel Highest/);
   assert.doesNotMatch(script, /steam\.exe/i);
+});
+
+void test("waits for git push to finish before requesting one update check", () => {
+  const script = buildPushUpdateWatcherScript("http://127.0.0.1:17642/update/check");
+
+  assert.match(script, /Wait-Process -Id \$GitPushPid/);
+  assert.match(script, /Start-Sleep -Seconds 3/);
+  assert.match(script, /Invoke-RestMethod -Method Post/);
 });
