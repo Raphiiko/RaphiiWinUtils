@@ -63,6 +63,16 @@ It also:
 - registers the Windows notification identity
 - installs a local `pre-push` Git hook that starts a background watcher; Git has no native `post-push` hook, so the watcher waits for `git push` to exit before asking the running app to check for updates
 
+Use `install:local` for the first installation or deliberate temporary testing only. Normal deployment is:
+
+1. Commit and push `main`.
+2. Let the pre-push watcher request one update check.
+3. Wait for `Update handoff complete` in `%APPDATA%\RaphiiWinUtils\logs\update-YYYY-MM-DD.log`.
+
+Do not manually copy files or run `install:local` while that handoff is still running. The updater may spend
+several minutes building before it stops the installed process, copies the build, writes the deployed revision,
+and starts the replacement.
+
 ## Dashboard
 
 Open <http://127.0.0.1:17642/> for the local dashboard — a dark "ambient ops" panel sized for both

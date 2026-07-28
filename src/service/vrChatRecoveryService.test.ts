@@ -25,10 +25,10 @@ void test("soft recovery serializes VR stack launch and restores the last instan
     "sleep:5000",
     "probe:steam",
     "probe:steam",
-    "probe:oyasumivr",
     "launch:250820",
     "probe:vrmonitor",
     "probe:vrserver",
+    "probe:oyasumivr",
     "launch:438100:vrchat://launch?ref=vrchat.com&id=wrld_12345678-1234-1234-1234-123456789abc:42~region(eu)",
     "probe:vrchat"
   ]);
@@ -68,25 +68,22 @@ void test("start waits for each VR stack dependency before launching its depende
       }
     })
   );
+  const statuses: VrRecoveryStatus[] = [];
+  service.onStatusChange((status) => statuses.push(structuredClone(status)));
 
   assert.deepEqual(await service.startVrChat(), { accepted: true, operationId: "operation-1" });
-  assert.deepEqual(events, [
-    "stop:VRChat,OyasumiVR,vrmonitor,vrserver",
-    "sleep:5000",
-    "probe:steam",
-    "launch-steam",
-    "probe:steam",
-    "probe:oyasumivr",
-    "launch:250820",
-    "probe:vrmonitor",
-    "launch:2538150",
-    "probe:vrserver",
-    "probe:oyasumivr",
-    "sleep:0",
-    "probe:oyasumivr",
-    "launch:438100",
-    "probe:vrchat"
-  ]);
+  const steamVrReady = events.indexOf("probe:vrserver");
+  assert.ok(steamVrReady > events.indexOf("launch:250820"));
+  assert.ok(events.indexOf("launch:2538150") > steamVrReady);
+  assert.ok(events.indexOf("launch:438100") > steamVrReady);
+  assert.ok(events.includes("probe:vrchat"));
+  assert.ok(
+    statuses.some(
+      (status) =>
+        status.activePhases?.includes("waiting-for-oyasumi") &&
+        status.activePhases.includes("launching-vrchat")
+    )
+  );
 });
 
 void test("start launches VRChat after SteamVR even when OyasumiVR never becomes ready", async () => {
@@ -121,7 +118,61 @@ void test("start launches VRChat after SteamVR even when OyasumiVR never becomes
   assert.equal(events.includes("launch:438100"), true);
 });
 
-void test("a new soft recovery supersedes a pending hard recovery before the matching resume", async () => {
+void test("start retries when Steam drops the first VRChat launch command", async () => {
+  const events: string[] = [];
+  const running = new Set(["steam", "vrmonitor", "vrserver", "oyasumivr"]);
+  let vrChatLaunches = 0;
+  const config = testConfig();
+  config.vrStackStartup.maxLaunchAttempts = 2;
+  config.vrStackStartup.vrChatJoinTimeoutMs = 0;
+  const service = new VrChatRecoveryService(
+    config,
+    new Logger("test"),
+    dependencies(events, {
+      getRunningProcessNames: (names) =>
+        Promise.resolve(new Set(names.filter((name) => running.has(name.toLowerCase())))),
+      launchSteamApp: (_path, appId) => {
+        events.push(`launch:${appId}`);
+        if (appId === "438100" && ++vrChatLaunches === 2) running.add("vrchat");
+        return Promise.resolve();
+      }
+    })
+  );
+
+  assert.equal((await service.startVrChat()).accepted, true);
+  assert.equal(vrChatLaunches, 2);
+  assert.equal(service.getStatus().phase, "completed-with-warning");
+});
+
+void test("local recovery replaces a stale hard recovery journal", async () => {
+  const events: string[] = [];
+  const saved: VrRecoveryStatus[] = [];
+  const service = new VrChatRecoveryService(
+    testConfig(),
+    new Logger("test"),
+    dependencies(events, {
+      loadStatus: () =>
+        Promise.resolve({
+          operationId: "old-hard-recovery",
+          action: "hard-recover",
+          phase: "failed-needs-attention",
+          updatedAt: new Date(0).toISOString(),
+          reason: "old failure"
+        }),
+      saveStatus: (status) => {
+        saved.push(structuredClone(status));
+        return Promise.resolve();
+      }
+    })
+  );
+
+  await service.start();
+  assert.equal((await service.recoverLastInstance()).accepted, true);
+  assert.equal(saved.at(-1)?.action, "soft-recover");
+  assert.equal(saved.at(-1)?.phase, "completed");
+});
+
+void test("a new soft recovery supersedes and replaces a pending hard recovery", async () => {
   const events: string[] = [];
   let saved: VrRecoveryStatus | undefined;
   const first = new VrChatRecoveryService(
@@ -157,21 +208,11 @@ void test("a new soft recovery supersedes a pending hard recovery before the mat
     })
   );
   await resumed.start();
-  assert.equal(resumed.getStatus().phase, "awaiting-rwu-after-boot");
-  assert.deepEqual(await resumed.resumeHardRecovery(request.operationId ?? ""), {
-    accepted: true,
-    operationId: "operation-1"
-  });
-  await waitFor(() => resumed.getStatus().phase === "completed");
+  assert.equal(resumed.getStatus().phase, "completed-with-warning");
+  assert.equal((await resumed.resumeHardRecovery(request.operationId ?? "")).accepted, false);
   assert.equal(events.includes("reboot"), true);
-  assert.equal(events.includes("matrix"), true);
   assert.equal(events.includes("launch:250820"), true);
-  assert.equal(
-    events.includes(
-      "launch:438100:vrchat://launch?ref=vrchat.com&id=wrld_12345678-1234-1234-1234-123456789abc:42~region(eu)"
-    ),
-    true
-  );
+  assert.equal(events.includes("matrix"), false);
 });
 
 void test("uses the final joined world instance from a VRChat log", () => {

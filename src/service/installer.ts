@@ -58,6 +58,7 @@ export async function installLocal(config: AppConfig, logger: Logger): Promise<v
   }
 
   registerWindowsIntegration(installDir, config.notifications.appName);
+  registerVrCleanupTask(log);
   startLogonTask(config.notifications.appName, log);
   await installPushUpdateHook(config, log);
   log.info("Install complete", {
@@ -188,6 +189,37 @@ export function buildLogonTaskRegistrationScript(
     "$settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)",
     `Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($trigger, $watchdogTrigger) -Principal $principal -Settings $settings -Description "${ps(appName)} background service" -Force | Out-Null`
   ].join("; ");
+}
+
+export function buildVrCleanupTaskRegistrationScript(): string {
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    "$user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name",
+    '$cleanupAction = New-ScheduledTaskAction -Execute "$env:SystemRoot\\System32\\taskkill.exe" -Argument "/F /T /IM VRChat.exe /IM OyasumiVR.exe /IM vrmonitor.exe /IM vrserver.exe"',
+    "$cleanupPrincipal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest",
+    '$cleanupSettings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 1)',
+    'Register-ScheduledTask -TaskName "RaphiiWinUtils VR Cleanup" -Action $cleanupAction -Principal $cleanupPrincipal -Settings $cleanupSettings -Description "Narrow elevated fallback for stopping a stuck VR stack" -Force | Out-Null'
+  ].join("; ");
+}
+
+function registerVrCleanupTask(log: Logger): void {
+  const existing = spawnSync(
+    "schtasks.exe",
+    ["/Query", "/TN", "RaphiiWinUtils VR Cleanup"],
+    { windowsHide: true, encoding: "utf8" }
+  );
+  if (existing.status === 0) return;
+
+  const result = spawnSync(
+    "powershell.exe",
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", buildVrCleanupTaskRegistrationScript()],
+    { windowsHide: true, encoding: "utf8" }
+  );
+  if (result.status !== 0) {
+    log.warn("Could not register optional elevated VR cleanup task", {
+      error: result.stderr.trim()
+    });
+  }
 }
 
 function startLogonTask(appName: string, log: Logger): void {
