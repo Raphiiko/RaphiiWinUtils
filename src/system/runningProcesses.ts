@@ -63,7 +63,7 @@ export async function stopProcesses(processNames: string[]): Promise<void> {
         { timeoutMs: 10_000 }
       );
       if (cleanup.code === 0) {
-        for (let attempt = 0; attempt < 10; attempt += 1) {
+        for (let attempt = 0; attempt < 30; attempt += 1) {
           await new Promise((resolve) => setTimeout(resolve, 1_000));
           const remainingProcessIds = await getRunningProcessIds(processNames);
           if (![...originalProcessIds].some((id) => remainingProcessIds.has(id))) return;
