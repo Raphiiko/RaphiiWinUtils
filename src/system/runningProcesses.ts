@@ -33,9 +33,6 @@ export async function stopProcesses(processNames: string[]): Promise<void> {
   const elevatedVrProcesses = processNames.some((name) =>
     ["vrmonitor", "vrserver"].includes(name.toLowerCase())
   );
-  const originalProcessIds = elevatedVrProcesses
-    ? await getRunningProcessIds(processNames)
-    : new Set<number>();
   const names = processNames.map(toPowerShellString).join(", ");
   const result = await runCommand(
     "powershell.exe",
@@ -63,18 +60,22 @@ export async function stopProcesses(processNames: string[]): Promise<void> {
         { timeoutMs: 10_000 }
       );
       if (cleanup.code === 0) {
-        for (let attempt = 0; attempt < 90; attempt += 1) {
+        for (let attempt = 0; attempt < 30; attempt += 1) {
           await new Promise((resolve) => setTimeout(resolve, 1_000));
           const remainingProcessIds = await getRunningProcessIds(processNames);
-          if (![...originalProcessIds].some((id) => remainingProcessIds.has(id))) return;
+          if (remainingProcessIds.size === 0) return;
         }
+        const remaining = await getRunningProcessNames(processNames);
+        throw new Error(
+          `Windows process cleanup timed out; still running: ${[...remaining].join(", ") || "unknown"}`
+        );
       }
     }
     throw new Error(`Windows process stop failed: ${result.stderr.trim() || result.code}`);
   }
 }
 
-async function getRunningProcessIds(processNames: string[]): Promise<Set<number>> {
+export async function getRunningProcessIds(processNames: string[]): Promise<Set<number>> {
   const names = processNames.map(toPowerShellString).join(", ");
   const result = await runCommand(
     "powershell.exe",
@@ -91,6 +92,8 @@ async function getRunningProcessIds(processNames: string[]): Promise<Set<number>
   return new Set(
     result.stdout
       .split(/\r?\n/)
+      .map((id) => id.trim())
+      .filter(Boolean)
       .map(Number)
       .filter(Number.isInteger)
   );

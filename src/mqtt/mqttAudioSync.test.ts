@@ -145,7 +145,7 @@ void test("publishes VR recovery buttons and routes their presses through the sh
     object_id: "shirakami_steamvr_soft_recovery",
     command_topic: "raphiiwinutils/shirakami/vr/recovery/soft/set",
     payload_press: "PRESS",
-    retain: true,
+    retain: false,
     qos: 1,
     availability: {
       topic: "raphiiwinutils/shirakami/availability",

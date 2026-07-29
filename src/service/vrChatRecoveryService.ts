@@ -14,8 +14,10 @@ export type VrRecoveryPhase =
   | "starting"
   | "soft-recovering"
   | "preparing"
+  | "stopping-vr-stack"
   | "reboot-commanded"
   | "awaiting-rwu-after-boot"
+  | "waiting-for-desktop"
   | "waiting-for-matrix"
   | "waiting-for-steam"
   | "waiting-for-steamvr"
@@ -81,6 +83,7 @@ export class VrChatRecoveryService {
   private active?: RecoveryOperation;
   private readonly activePhases = new Set<VrRecoveryPhase>();
   private readonly statusListeners = new Set<(status: VrRecoveryStatus) => void>();
+  private statusSave = Promise.resolve();
 
   constructor(
     config: AppConfig,
@@ -113,15 +116,15 @@ export class VrChatRecoveryService {
         saved.activePhases ?? (isTerminalPhase(saved.phase) ? [] : [saved.phase])
     };
     if (saved.action === "hard-recover" && isActiveHardRecoveryPhase(saved.phase)) {
-      const bootMarker = await this.dependencies.getBootMarker();
-      if (
-        saved.phase === "reboot-commanded" &&
-        saved.bootMarker &&
-        saved.bootMarker !== bootMarker
-      ) {
-        await this.setStatus({ phase: "awaiting-rwu-after-boot" });
-      } else {
-        await this.fail("RaphiiWinUtils restarted without observing the requested Windows reboot");
+      if (saved.phase === "reboot-commanded") {
+        const bootMarker = await this.dependencies.getBootMarker();
+        if (saved.bootMarker && saved.bootMarker !== bootMarker) {
+          await this.setStatus({ phase: "awaiting-rwu-after-boot" });
+        } else {
+          await this.fail("RaphiiWinUtils restarted without observing the requested Windows reboot");
+        }
+      } else if (saved.phase !== "awaiting-rwu-after-boot") {
+        await this.fail(`RaphiiWinUtils restarted during hard recovery at ${saved.phase}`);
       }
       if (this.status.phase === "awaiting-rwu-after-boot" && saved.operationId)
         this.beginOperation(saved.operationId, "hard-recover");
@@ -162,6 +165,7 @@ export class VrChatRecoveryService {
     }
     if (this.isSameOperation(operationId))
       return Promise.resolve({ accepted: true, operationId });
+    if (this.active) return Promise.resolve(this.rejectedBusyResult());
     const recovery = this.beginOperation(operationId, "hard-recover");
     void this.run(recovery, () => this.runHardRecoveryPreparation(recovery, beforeReboot));
     return Promise.resolve({ accepted: true, operationId });
@@ -190,7 +194,11 @@ export class VrChatRecoveryService {
   }
 
   cancel(operationId?: string, reason?: string): Promise<VrChatRecoveryRequestResult> {
-    if (operationId && operationId !== this.active?.operationId) {
+    if (
+      operationId &&
+      operationId !== this.active?.operationId &&
+      operationId !== this.status.operationId
+    ) {
       return Promise.resolve({ accepted: false, reason: "operation ID does not match the running recovery" });
     }
     const cancelledOperationId = this.active?.operationId;
@@ -213,6 +221,7 @@ export class VrChatRecoveryService {
       return { accepted: false, reason: "VR recovery is disabled" };
     }
     if (this.isSameOperation(operationId)) return { accepted: true, operationId };
+    if (this.active) return this.rejectedBusyResult();
     const recovery = this.beginOperation(operationId, action);
     const running = this.run(recovery, () => this.runLocalRecovery(recovery));
     try {
@@ -244,7 +253,7 @@ export class VrChatRecoveryService {
       await this.stopVrStack(recovery);
       const rejoined = await this.startVrStack(recovery, instanceId);
       await this.setStatus({
-        ...completionStatus(instanceId, rejoined),
+        ...completionStatus(action, instanceId, rejoined),
         instanceId
       }, recovery);
     } catch (error) {
@@ -282,10 +291,12 @@ export class VrChatRecoveryService {
   private async runHardRecoveryResume(recovery: RecoveryOperation): Promise<void> {
     const { operationId } = recovery;
     try {
-      await this.sleep(this.config.hardRecovery.desktopSettleMs, recovery);
+      await this.withActivePhase("waiting-for-desktop", recovery, () =>
+        this.sleep(this.config.hardRecovery.desktopSettleMs, recovery)
+      );
       await this.waitForMatrix(recovery);
       const rejoined = await this.startVrStack(recovery, this.status.instanceId);
-      await this.setStatus(completionStatus(this.status.instanceId, rejoined), recovery);
+      await this.setStatus(completionStatus("hard-recover", this.status.instanceId, rejoined), recovery);
     } catch (error) {
       if (isAbortError(error)) return;
       await this.fail(formatError(error), recovery);
@@ -450,16 +461,22 @@ export class VrChatRecoveryService {
   }
 
   private async stopVrStack(recovery: RecoveryOperation): Promise<void> {
-    await this.awaitExternal(
-      this.dependencies.stopProcesses(["VRChat", "OyasumiVR", "vrmonitor", "vrserver"]),
-      recovery
-    );
-    await this.sleep(
-      Math.max(
-        this.config.vrChatRecovery.vrChatExitWaitMs,
-        this.config.vrChatRecovery.steamVrExitWaitMs
-      ),
-      recovery
+    await this.withActivePhase(
+      "stopping-vr-stack",
+      recovery,
+      async () => {
+        await this.awaitExternal(
+          this.dependencies.stopProcesses(["VRChat", "OyasumiVR", "vrmonitor", "vrserver"]),
+          recovery
+        );
+        await this.sleep(
+          Math.max(
+            this.config.vrChatRecovery.vrChatExitWaitMs,
+            this.config.vrChatRecovery.steamVrExitWaitMs
+          ),
+          recovery
+        );
+      }
     );
   }
 
@@ -560,6 +577,7 @@ export class VrChatRecoveryService {
       })
       .finally(() => {
         if (recovery.running === running) recovery.running = undefined;
+        if (this.active === recovery && isTerminalPhase(this.status.phase)) this.active = undefined;
       });
     return running;
   }
@@ -632,13 +650,11 @@ export class VrChatRecoveryService {
       return await task();
     } finally {
       this.activePhases.delete(phase);
-      if (this.activePhases.size > 0) {
-        const activePhases = [...this.activePhases];
-        await this.setStatus(
-          { phase: activePhases.at(-1) ?? this.status.phase, activePhases },
-          recovery
-        );
-      }
+      const activePhases = [...this.activePhases];
+      await this.setStatus(
+        { phase: activePhases.at(-1) ?? this.status.phase, activePhases },
+        recovery
+      );
     }
   }
 
@@ -647,6 +663,12 @@ export class VrChatRecoveryService {
     recovery?: RecoveryOperation
   ): Promise<void> {
     if (recovery && this.active !== recovery) return;
+    if (
+      recovery &&
+      this.status.operationId === recovery.operationId &&
+      isTerminalPhase(this.status.phase) &&
+      (!change.phase || !isTerminalPhase(change.phase))
+    ) return;
     const activePhases = change.phase && isTerminalPhase(change.phase)
       ? []
       : change.activePhases ?? (change.phase ? [change.phase] : this.status.activePhases);
@@ -656,7 +678,10 @@ export class VrChatRecoveryService {
       activePhases,
       updatedAt: this.dependencies.now().toISOString()
     };
-    if (this.status.phase !== "failed-needs-attention") delete this.status.reason;
+    if (
+      this.status.phase !== "failed-needs-attention" &&
+      this.status.phase !== "completed-with-warning"
+    ) delete this.status.reason;
     if (isTerminalPhase(this.status.phase) && recovery?.watchdog) {
       clearTimeout(recovery.watchdog);
       recovery.watchdog = undefined;
@@ -664,20 +689,38 @@ export class VrChatRecoveryService {
     this.notifyStatus();
     if (this.status.action) {
       try {
-        const save = this.dependencies.saveStatus(this.status);
+        const snapshot = structuredClone(this.status);
+        const save = this.statusSave.then(() => this.dependencies.saveStatus(snapshot));
+        this.statusSave = save.catch(() => {});
         if (recovery) await this.awaitExternal(save, recovery);
         else await withTimeout(save, 10_000, "Recovery journal save timed out");
       } catch (error) {
         if (recovery && this.active !== recovery) return;
         if (isAbortError(error) && this.status.phase === "failed-needs-attention") return;
+        const reason = `Could not save recovery journal: ${formatError(error)}`;
         this.status = {
           ...this.status,
           phase: "failed-needs-attention",
+          activePhases: [],
           updatedAt: this.dependencies.now().toISOString(),
-          reason: `Could not save recovery journal: ${formatError(error)}`
+          reason
         };
+        recovery?.controller.abort();
+        if (recovery?.watchdog) {
+          clearTimeout(recovery.watchdog);
+          recovery.watchdog = undefined;
+        }
         this.log.error("Could not save recovery journal", { error: formatError(error) });
         this.notifyStatus();
+        const failedSnapshot = structuredClone(this.status);
+        const failedSave = this.statusSave.then(() => this.dependencies.saveStatus(failedSnapshot));
+        this.statusSave = failedSave.catch(() => {});
+        try {
+          await withTimeout(failedSave, 10_000, "Recovery failure journal save timed out");
+        } catch (saveError) {
+          this.log.error("Could not persist recovery failure", { error: formatError(saveError) });
+        }
+        if (change.phase !== "failed-needs-attention") throw new Error(reason, { cause: error });
       }
     }
   }
@@ -689,15 +732,23 @@ export class VrChatRecoveryService {
 }
 
 function completionStatus(
+  action: VrRecoveryAction,
   instanceId: string | undefined,
   rejoined: boolean | undefined
 ): Pick<VrRecoveryStatus, "phase" | "reason"> {
+  if (action === "start") return { phase: "completed", reason: undefined };
   if (!instanceId) {
-    return { phase: "completed-with-warning", reason: undefined };
+    return {
+      phase: "completed-with-warning",
+      reason: "Last VRChat instance was unavailable; VRChat launched normally"
+    };
   }
   return rejoined
     ? { phase: "completed", reason: undefined }
-    : { phase: "completed-with-warning", reason: undefined };
+    : {
+        phase: "completed-with-warning",
+        reason: "VRChat started, but rejoining the previous instance was not confirmed"
+      };
 }
 
 function isActiveHardRecoveryPhase(phase: VrRecoveryPhase): boolean {

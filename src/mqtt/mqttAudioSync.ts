@@ -389,7 +389,7 @@ export class MqttAudioSyncService implements AudioModePublisher {
             object_id: `shirakami_${button.entityId}`,
             command_topic: this.topic(button.commandTopicSuffix),
             payload_press: "PRESS",
-            retain: true,
+            retain: false,
             qos: 1,
             availability,
             device

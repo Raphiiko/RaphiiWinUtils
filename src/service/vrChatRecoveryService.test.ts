@@ -14,6 +14,8 @@ import {
 void test("soft recovery serializes VR stack launch and restores the last instance", async () => {
   const events: string[] = [];
   const service = new VrChatRecoveryService(testConfig(), new Logger("test"), dependencies(events));
+  const phases: string[] = [];
+  service.onStatusChange((status) => phases.push(status.phase));
 
   assert.deepEqual(await service.recoverLastInstance(), {
     accepted: true,
@@ -32,6 +34,7 @@ void test("soft recovery serializes VR stack launch and restores the last instan
     "launch:438100:vrchat://launch?ref=vrchat.com&id=wrld_12345678-1234-1234-1234-123456789abc:42~region(eu)",
     "probe:vrchat"
   ]);
+  assert.ok(phases.includes("stopping-vr-stack"));
 });
 
 void test("start waits for each VR stack dependency before launching its dependent", async () => {
@@ -141,7 +144,7 @@ void test("start retries when Steam drops the first VRChat launch command", asyn
 
   assert.equal((await service.startVrChat()).accepted, true);
   assert.equal(vrChatLaunches, 2);
-  assert.equal(service.getStatus().phase, "completed-with-warning");
+  assert.equal(service.getStatus().phase, "completed");
 });
 
 void test("local recovery replaces a stale hard recovery journal", async () => {
@@ -172,7 +175,7 @@ void test("local recovery replaces a stale hard recovery journal", async () => {
   assert.equal(saved.at(-1)?.phase, "completed");
 });
 
-void test("a new soft recovery supersedes and replaces a pending hard recovery", async () => {
+void test("a local recovery cannot replace a pending hard recovery", async () => {
   const events: string[] = [];
   let saved: VrRecoveryStatus | undefined;
   const first = new VrChatRecoveryService(
@@ -193,26 +196,93 @@ void test("a new soft recovery supersedes and replaces a pending hard recovery",
   const request = await first.hardRecover();
   assert.equal(request.accepted, true);
   await waitFor(() => first.getStatus().phase === "reboot-commanded");
-  assert.equal((await first.startVrChat()).accepted, true);
+  const start = await first.startVrChat();
+  assert.equal(start.accepted, false);
+  assert.match(start.reason ?? "", /already active/);
+  assert.equal(saved?.action, "hard-recover");
+  assert.equal(saved?.phase, "reboot-commanded");
+  assert.equal(events.includes("reboot"), true);
+  assert.equal(events.includes("launch:250820"), false);
+  await first.cancel(request.operationId);
+});
 
-  const resumed = new VrChatRecoveryService(
+void test("hard recovery does not reboot when its journal cannot be saved", async () => {
+  const events: string[] = [];
+  const service = new VrChatRecoveryService(
     testConfig(),
     new Logger("test"),
     dependencies(events, {
-      loadStatus: () => Promise.resolve(saved),
-      getBootMarker: () => Promise.resolve("boot-marker-after-reboot"),
+      saveStatus: () => Promise.reject(new Error("disk full"))
+    })
+  );
+
+  assert.equal((await service.hardRecover()).accepted, true);
+  await waitFor(() => service.getStatus().phase === "failed-needs-attention");
+  assert.match(service.getStatus().reason ?? "", /disk full/);
+  assert.equal(events.includes("reboot"), false);
+});
+
+void test("journal failure aborts parallel startup without reviving the operation", async () => {
+  const events: string[] = [];
+  const service = new VrChatRecoveryService(
+    testConfig(),
+    new Logger("test"),
+    dependencies(events, {
+      saveStatus: (status) => status.phase === "launching-vrchat"
+        ? Promise.reject(new Error("disk full"))
+        : Promise.resolve()
+    })
+  );
+
+  assert.equal((await service.startVrChat()).accepted, false);
+  assert.equal(service.getStatus().phase, "failed-needs-attention");
+  assert.match(service.getStatus().reason ?? "", /disk full/);
+  assert.equal(events.some((event) => event.startsWith("launch:438100")), false);
+});
+
+void test("journal failure is the final persisted parallel startup state", async () => {
+  const events: string[] = [];
+  const saved: VrRecoveryStatus[] = [];
+  let failed = false;
+  const service = new VrChatRecoveryService(
+    testConfig(),
+    new Logger("test"),
+    dependencies(events, {
       saveStatus: (status) => {
-        saved = structuredClone(status);
+        if (!failed && status.phase === "waiting-for-oyasumi") {
+          failed = true;
+          return Promise.reject(new Error("disk full"));
+        }
+        saved.push(structuredClone(status));
         return Promise.resolve();
       }
     })
   );
-  await resumed.start();
-  assert.equal(resumed.getStatus().phase, "completed-with-warning");
-  assert.equal((await resumed.resumeHardRecovery(request.operationId ?? "")).accepted, false);
-  assert.equal(events.includes("reboot"), true);
-  assert.equal(events.includes("launch:250820"), true);
-  assert.equal(events.includes("matrix"), false);
+
+  assert.equal((await service.startVrChat()).accepted, false);
+  assert.equal(saved.at(-1)?.phase, "failed-needs-attention");
+});
+
+void test("hard recovery remains resumable after another service start", async () => {
+  const events: string[] = [];
+  const service = new VrChatRecoveryService(
+    testConfig(),
+    new Logger("test"),
+    dependencies(events, {
+      loadStatus: () => Promise.resolve({
+        operationId: "hard-1",
+        action: "hard-recover",
+        phase: "awaiting-rwu-after-boot",
+        updatedAt: new Date(0).toISOString()
+      })
+    })
+  );
+
+  await service.start();
+  assert.equal(service.getStatus().phase, "awaiting-rwu-after-boot");
+  assert.equal((await service.resumeHardRecovery("hard-1")).accepted, true);
+  await waitFor(() => service.getStatus().phase === "completed-with-warning");
+  assert.equal(events.includes("matrix"), true);
 });
 
 void test("uses the final joined world instance from a VRChat log", () => {
