@@ -46,6 +46,96 @@ void test("soft recovery serializes VR stack launch and restores the last instan
   ]);
 });
 
+void test("merges correlated Home Assistant steps into the authoritative recovery history", async () => {
+  const events: string[] = [];
+  const service = new VrChatRecoveryService(testConfig(), new Logger("test"), dependencies(events));
+
+  assert.deepEqual(await service.prepare("soft-recover", "panel-1"), {
+    accepted: true,
+    operationId: "panel-1"
+  });
+  assert.equal(events.length, 0);
+  assert.equal(
+    (await service.reportExternalPhase("stale", "setting-audio-mode", "active")).accepted,
+    false
+  );
+  await service.reportExternalPhase("panel-1", "setting-audio-mode", "active");
+  await service.reportExternalPhase("panel-1", "setting-audio-mode", "completed");
+  await service.reportExternalPhase("panel-1", "setting-audio-mode", "active");
+  assert.equal(service.getStatus().activePhases?.includes("setting-audio-mode"), false);
+  await service.reportExternalPhase("panel-1", "turning-lighthouses-off", "active");
+  await service.reportExternalPhase("panel-1", "turning-lighthouses-off", "completed");
+  assert.equal((await service.recoverLastInstance("panel-1")).accepted, true);
+  assert.deepEqual(service.getStatus().completedPhases?.slice(0, 3), [
+    "soft-recovering",
+    "setting-audio-mode",
+    "turning-lighthouses-off"
+  ]);
+});
+
+void test("prepared recovery survives restart and still requires the matching action", async () => {
+  const events: string[] = [];
+  let prepared: VrRecoveryStatus | undefined;
+  const first = new VrChatRecoveryService(
+    testConfig(),
+    new Logger("test"),
+    dependencies([], {
+      saveStatus: (status) => {
+        prepared = structuredClone(status);
+        return Promise.resolve();
+      }
+    })
+  );
+  await first.prepare("start", "panel-1");
+  assert.equal((await first.prepare("soft-recover", "panel-1")).accepted, false);
+  const preparedSnapshot = structuredClone(prepared);
+  await first.cancel("panel-1");
+
+  const second = new VrChatRecoveryService(
+    testConfig(),
+    new Logger("test"),
+    dependencies(events, { loadStatus: () => Promise.resolve(preparedSnapshot) })
+  );
+  await second.start();
+  assert.equal((await second.startVrChat("panel-1")).accepted, true);
+  assert.equal(events.includes("launch:438100"), true);
+});
+
+void test("does not reserve a disabled recovery", async () => {
+  const config = testConfig();
+  config.vrChatRecovery.enabled = false;
+  const service = new VrChatRecoveryService(config, new Logger("test"), dependencies([]));
+
+  assert.equal((await service.prepare("start", "panel-1")).accepted, false);
+  assert.equal(service.getStatus().phase, "idle");
+});
+
+void test("deduplicates a correlated command while prepared state is being saved", async () => {
+  const events: string[] = [];
+  let blockPreparedClear = false;
+  let releaseSave = () => {};
+  const saveBlocked = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  const service = new VrChatRecoveryService(
+    testConfig(),
+    new Logger("test"),
+    dependencies(events, {
+      saveStatus: (status) =>
+        blockPreparedClear && status.prepared === false ? saveBlocked : Promise.resolve()
+    })
+  );
+  await service.prepare("start", "panel-1");
+  blockPreparedClear = true;
+
+  const first = service.startVrChat("panel-1");
+  const duplicate = await service.startVrChat("panel-1");
+  assert.equal(duplicate.accepted, true);
+  releaseSave();
+  assert.equal((await first).accepted, true);
+  assert.equal(events.filter((event) => event === "launch:438100").length, 1);
+});
+
 void test("start waits for each VR stack dependency before launching its dependent", async () => {
   const events: string[] = [];
   const running = new Set<string>();

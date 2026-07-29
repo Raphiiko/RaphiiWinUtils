@@ -19,6 +19,10 @@ export type VrRecoveryPhase =
   | "awaiting-rwu-after-boot"
   | "waiting-for-desktop"
   | "waiting-for-matrix"
+  | "setting-audio-mode"
+  | "turning-lighthouses-off"
+  | "turning-lighthouses-on"
+  | "turning-desk-monitors-off"
   | "waiting-for-steam"
   | "waiting-for-steamvr"
   | "waiting-for-oyasumi"
@@ -39,6 +43,7 @@ export interface VrRecoveryStatus {
   bootMarker?: string;
   activePhases?: VrRecoveryPhase[];
   completedPhases?: VrRecoveryPhase[];
+  prepared?: boolean;
 }
 
 export interface VrChatRecoveryRequestResult {
@@ -46,6 +51,12 @@ export interface VrChatRecoveryRequestResult {
   operationId?: string;
   reason?: string;
 }
+
+export type VrRecoveryExternalPhase =
+  | "setting-audio-mode"
+  | "turning-lighthouses-off"
+  | "turning-lighthouses-on"
+  | "turning-desk-monitors-off";
 
 export interface VrChatRecoveryDependencies {
   findLastInstanceId(): Promise<string | undefined>;
@@ -117,6 +128,20 @@ export class VrChatRecoveryService {
         saved.activePhases ?? (isTerminalPhase(saved.phase) ? [] : [saved.phase]),
       completedPhases: saved.completedPhases ?? legacyCompletedPhases(saved)
     };
+    if (
+      saved.prepared &&
+      saved.operationId &&
+      saved.action &&
+      !isTerminalPhase(saved.phase)
+    ) {
+      const recovery = this.beginOperation(saved.operationId, saved.action);
+      for (const phase of saved.activePhases ?? [saved.phase]) this.activePhases.add(phase);
+      this.log.warn("Prepared VR recovery is awaiting its correlated command", {
+        operationId: recovery.operationId,
+        action: recovery.action
+      });
+      return;
+    }
     if (saved.action === "hard-recover" && isActiveHardRecoveryPhase(saved.phase)) {
       if (saved.phase === "reboot-commanded") {
         const bootMarker = await this.dependencies.getBootMarker();
@@ -157,22 +182,94 @@ export class VrChatRecoveryService {
     return this.requestLocal("start", operationId);
   }
 
+  prepare(action: VrRecoveryAction, operationId: string): Promise<VrChatRecoveryRequestResult> {
+    if (!operationId) return Promise.resolve({ accepted: false, reason: "operation ID is required" });
+    if (
+      (action === "hard-recover" && !this.config.hardRecovery.enabled) ||
+      (action !== "hard-recover" && !this.config.vrChatRecovery.enabled)
+    ) return Promise.resolve({ accepted: false, reason: `${action} is disabled` });
+    if (this.isSameOperation(operationId)) {
+      return Promise.resolve(
+        this.status.action === action
+          ? { accepted: true, operationId }
+          : { accepted: false, reason: "operation ID belongs to a different recovery action" }
+      );
+    }
+    if (this.active) return Promise.resolve(this.rejectedBusyResult());
+
+    const recovery = this.beginOperation(operationId, action);
+    const phase = initialPhase(action);
+    this.activePhases.add(phase);
+    return this.setStatus({
+      operationId,
+      action,
+      phase,
+      activePhases: [...this.activePhases],
+      completedPhases: [],
+      prepared: true,
+      instanceId: undefined,
+      reason: undefined,
+      attempt: undefined,
+      bootMarker: undefined
+    }, recovery).then(() => ({ accepted: true, operationId }));
+  }
+
+  async reportExternalPhase(
+    operationId: string,
+    phase: VrRecoveryExternalPhase,
+    state: "active" | "completed"
+  ): Promise<VrChatRecoveryRequestResult> {
+    const recovery = this.active;
+    if (!recovery || recovery.operationId !== operationId || isTerminalPhase(this.status.phase)) {
+      return {
+        accepted: false,
+        reason: "operation ID does not match the running recovery"
+      };
+    }
+    if (state === "completed") {
+      await this.completePhase(phase, recovery);
+      return { accepted: true, operationId };
+    }
+    if (this.status.completedPhases?.includes(phase)) {
+      return { accepted: true, operationId };
+    }
+    const preparationPhase = initialPhase(recovery.action);
+    if (this.activePhases.has(preparationPhase)) {
+      this.activePhases.delete(preparationPhase);
+    }
+    this.activePhases.add(phase);
+    await this.setStatus({
+      phase,
+      activePhases: [...this.activePhases],
+      completedPhases: this.completedPhasesWith(preparationPhase)
+    }, recovery);
+    return { accepted: true, operationId };
+  }
+
   recoverLastInstance(operationId?: string): Promise<VrChatRecoveryRequestResult> {
     return this.requestLocal("soft-recover", operationId);
   }
 
-  hardRecover(
+  async hardRecover(
     operationId = this.dependencies.createOperationId(),
     beforeReboot?: () => Promise<void>
   ): Promise<VrChatRecoveryRequestResult> {
     if (!this.config.hardRecovery.enabled) {
       return Promise.resolve({ accepted: false, reason: "hard recovery is disabled" });
     }
-    if (this.isSameOperation(operationId))
+    if (this.active) {
+      if (this.active.operationId !== operationId || this.active.action !== "hard-recover")
+        return Promise.resolve(this.rejectedBusyResult());
+      if (this.active.running) return Promise.resolve({ accepted: true, operationId });
+    } else if (this.isSameOperation(operationId)) {
       return Promise.resolve({ accepted: true, operationId });
-    if (this.active) return Promise.resolve(this.rejectedBusyResult());
-    const recovery = this.beginOperation(operationId, "hard-recover");
-    void this.run(recovery, () => this.runHardRecoveryPreparation(recovery, beforeReboot));
+    }
+    const recovery = this.active ?? this.beginOperation(operationId, "hard-recover");
+    void this.run(recovery, async () => {
+      if (this.status.operationId === operationId)
+        await this.setStatus({ prepared: false }, recovery);
+      await this.runHardRecoveryPreparation(recovery, beforeReboot);
+    });
     return Promise.resolve({ accepted: true, operationId });
   }
 
@@ -225,10 +322,19 @@ export class VrChatRecoveryService {
     if (!this.config.vrChatRecovery.enabled) {
       return { accepted: false, reason: "VR recovery is disabled" };
     }
-    if (this.isSameOperation(operationId)) return { accepted: true, operationId };
-    if (this.active) return this.rejectedBusyResult();
-    const recovery = this.beginOperation(operationId, action);
-    const running = this.run(recovery, () => this.runLocalRecovery(recovery));
+    if (this.active) {
+      if (this.active.operationId !== operationId || this.active.action !== action)
+        return this.rejectedBusyResult();
+      if (this.active.running) return { accepted: true, operationId };
+    } else if (this.isSameOperation(operationId)) {
+      return { accepted: true, operationId };
+    }
+    const recovery = this.active ?? this.beginOperation(operationId, action);
+    const running = this.run(recovery, async () => {
+      if (this.status.operationId === operationId)
+        await this.setStatus({ prepared: false }, recovery);
+      await this.runLocalRecovery(recovery);
+    });
     try {
       await running;
       return recovery.controller.signal.aborted
@@ -241,22 +347,28 @@ export class VrChatRecoveryService {
 
   private async runLocalRecovery(recovery: RecoveryOperation): Promise<void> {
     const { action, operationId } = recovery;
-    await this.setStatus({
-      operationId,
-      action,
-      phase: action === "start" ? "starting" : "soft-recovering",
-      instanceId: undefined,
-      reason: undefined,
-      attempt: undefined,
-      bootMarker: undefined,
-      completedPhases: []
-    }, recovery);
+    const phase = initialPhase(action);
+    if (this.status.operationId !== operationId) {
+      this.activePhases.add(phase);
+      await this.setStatus({
+        operationId,
+        action,
+        phase,
+        activePhases: [...this.activePhases],
+        instanceId: undefined,
+        reason: undefined,
+        attempt: undefined,
+        bootMarker: undefined,
+        completedPhases: [],
+        prepared: false
+      }, recovery);
+    }
     this.throwIfAborted(recovery);
     const instanceId =
       action === "soft-recover" ? await this.captureLastInstanceId(recovery) : undefined;
     await this.setStatus({ instanceId }, recovery);
     try {
-      await this.completePhase(action === "start" ? "starting" : "soft-recovering", recovery);
+      await this.completePhase(phase, recovery);
       await this.stopVrStack(recovery);
       const rejoined = await this.startVrStack(recovery, instanceId);
       await this.setStatus({
@@ -275,12 +387,17 @@ export class VrChatRecoveryService {
     beforeReboot?: () => Promise<void>
   ): Promise<void> {
     const { operationId } = recovery;
-    await this.setStatus({
-      operationId,
-      action: "hard-recover",
-      phase: "preparing",
-      completedPhases: []
-    }, recovery);
+    if (this.status.operationId !== operationId) {
+      this.activePhases.add("preparing");
+      await this.setStatus({
+        operationId,
+        action: "hard-recover",
+        phase: "preparing",
+        activePhases: [...this.activePhases],
+        completedPhases: [],
+        prepared: false
+      }, recovery);
+    }
     const instanceId = await this.captureLastInstanceId(recovery);
     await this.setStatus({ instanceId }, recovery);
     try {
@@ -680,7 +797,13 @@ export class VrChatRecoveryService {
   }
 
   private completePhase(phase: VrRecoveryPhase, recovery: RecoveryOperation): Promise<void> {
-    return this.setStatus({ activePhases: [], completedPhases: this.completedPhasesWith(phase) }, recovery);
+    this.activePhases.delete(phase);
+    const activePhases = [...this.activePhases];
+    return this.setStatus({
+      phase: activePhases.at(-1) ?? this.status.phase,
+      activePhases,
+      completedPhases: this.completedPhasesWith(phase)
+    }, recovery);
   }
 
   private completedPhasesWith(phase: VrRecoveryPhase): VrRecoveryPhase[] {
@@ -779,6 +902,12 @@ function completionStatus(
         phase: "completed-with-warning",
         reason: "VRChat started, but rejoining the previous instance was not confirmed"
       };
+}
+
+function initialPhase(action: VrRecoveryAction): VrRecoveryPhase {
+  if (action === "start") return "starting";
+  if (action === "soft-recover") return "soft-recovering";
+  return "preparing";
 }
 
 function isActiveHardRecoveryPhase(phase: VrRecoveryPhase): boolean {

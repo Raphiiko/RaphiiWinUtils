@@ -8,6 +8,8 @@ import type { Logger } from "../system/logger.ts";
 import type { AudioModePublisher } from "./audioModePublisher.ts";
 import type {
   VrChatRecoveryRequestResult,
+  VrRecoveryAction,
+  VrRecoveryExternalPhase,
   VrRecoveryStatus
 } from "../service/vrChatRecoveryService.ts";
 import {
@@ -40,8 +42,6 @@ const vrRecoveryButtons = [
     name: "Start VRChat"
   }
 ] as const;
-
-type VrRecoveryAction = (typeof vrRecoveryButtons)[number]["action"];
 
 /**
  * Bridges confirmed Windows audio state and Home Assistant MQTT discovery.
@@ -147,7 +147,9 @@ export class MqttAudioSyncService implements AudioModePublisher {
       void this.onConnected();
     });
     this.client.on("message", (topic, payload, packet) => {
-      void this.onMessage(topic, payload.toString(), packet);
+      void this.onMessage(topic, payload.toString(), packet).catch((error) => {
+        this.log.error("Could not handle MQTT message", { topic, error: formatError(error) });
+      });
     });
     this.client.on("error", (error) => {
       this.log.warn("MQTT broker connection error", { error: error.message });
@@ -165,6 +167,8 @@ export class MqttAudioSyncService implements AudioModePublisher {
     await this.subscribe(this.topic("vr/recovery/hard/resume/set"));
     await this.subscribe(this.topic("vr/recovery/hard/cancel/set"));
     await this.subscribe(this.topic("vr/recovery/cancel/set"));
+    await this.subscribe(this.topic("vr/recovery/prepare/set"));
+    await this.subscribe(this.topic("vr/recovery/progress/set"));
     await Promise.all(
       this.channels
         .configuredChannelNames()
@@ -203,6 +207,34 @@ export class MqttAudioSyncService implements AudioModePublisher {
       } catch (error) {
         this.log.error("Could not apply MQTT audio mode", { modeId, error: formatError(error) });
       }
+      return;
+    }
+    if (topic === this.topic("vr/recovery/prepare/set")) {
+      if (packet.retain) return;
+      const command = parsePreparationCommand(payload);
+      if (!command || !this.vrChatRecovery) {
+        this.log.warn("Ignoring invalid VR recovery preparation");
+        return;
+      }
+      const result = await this.vrChatRecovery.prepare(command.action, command.operationId);
+      if (!result.accepted)
+        this.log.warn("Ignoring VR recovery preparation", { reason: result.reason });
+      return;
+    }
+    if (topic === this.topic("vr/recovery/progress/set")) {
+      if (packet.retain) return;
+      const command = parseProgressCommand(payload);
+      if (!command || !this.vrChatRecovery) {
+        this.log.warn("Ignoring invalid VR recovery progress");
+        return;
+      }
+      const result = await this.vrChatRecovery.reportExternalPhase(
+        command.operationId,
+        command.phase,
+        command.state
+      );
+      if (!result.accepted)
+        this.log.warn("Ignoring VR recovery progress", { reason: result.reason });
       return;
     }
     if (topic === this.topic("vr/recovery/hard/set")) {
@@ -524,6 +556,12 @@ export class MqttAudioSyncService implements AudioModePublisher {
 }
 
 interface VrChatRecoveryController {
+  prepare(action: VrRecoveryAction, operationId: string): Promise<VrChatRecoveryRequestResult>;
+  reportExternalPhase(
+    operationId: string,
+    phase: VrRecoveryExternalPhase,
+    state: "active" | "completed"
+  ): Promise<VrChatRecoveryRequestResult>;
   recoverLastInstance(operationId?: string): Promise<VrChatRecoveryRequestResult>;
   startVrChat(operationId?: string): Promise<VrChatRecoveryRequestResult>;
   hardRecover(
@@ -553,6 +591,51 @@ function parseRecoveryCommand(payload: string): { operationId?: string; reason?:
     };
   } catch {
     return {};
+  }
+}
+
+const externalRecoveryPhases = new Set<VrRecoveryExternalPhase>([
+  "setting-audio-mode",
+  "turning-lighthouses-off",
+  "turning-lighthouses-on",
+  "turning-desk-monitors-off"
+]);
+
+function parsePreparationCommand(
+  payload: string
+): { operationId: string; action: VrRecoveryAction } | undefined {
+  try {
+    const parsed = JSON.parse(payload) as { operationId?: unknown; action?: unknown };
+    if (
+      typeof parsed.operationId !== "string" ||
+      !parsed.operationId ||
+      !["start", "soft-recover", "hard-recover"].includes(String(parsed.action))
+    ) return undefined;
+    return { operationId: parsed.operationId, action: parsed.action as VrRecoveryAction };
+  } catch {
+    return undefined;
+  }
+}
+
+function parseProgressCommand(
+  payload: string
+): { operationId: string; phase: VrRecoveryExternalPhase; state: "active" | "completed" } | undefined {
+  try {
+    const parsed = JSON.parse(payload) as { operationId?: unknown; phase?: unknown; state?: unknown };
+    if (
+      typeof parsed.operationId !== "string" ||
+      !parsed.operationId ||
+      typeof parsed.phase !== "string" ||
+      !externalRecoveryPhases.has(parsed.phase as VrRecoveryExternalPhase) ||
+      (parsed.state !== "active" && parsed.state !== "completed")
+    ) return undefined;
+    return {
+      operationId: parsed.operationId,
+      phase: parsed.phase as VrRecoveryExternalPhase,
+      state: parsed.state
+    };
+  } catch {
+    return undefined;
   }
 }
 

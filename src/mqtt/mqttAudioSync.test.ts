@@ -102,6 +102,8 @@ void test("publishes VR recovery buttons and routes their presses through the sh
   let recoverCalls = 0;
   let startCalls = 0;
   let hardRecoverCalls = 0;
+  const prepared: string[] = [];
+  const reported: string[] = [];
   const service = new MqttAudioSyncService(
     { ...defaultConfig.mqtt, enabled: true, password: "test-password" },
     { listModes: () => [deskSpeakers], applyMode: () => Promise.resolve(deskSpeakers) },
@@ -109,6 +111,14 @@ void test("publishes VR recovery buttons and routes their presses through the sh
     logger,
     { connect: () => client as unknown as MqttClient, stateStore: new MemoryStateStore() },
     {
+      prepare: (action, operationId) => {
+        prepared.push(`${action}:${operationId}`);
+        return Promise.resolve({ accepted: true, operationId });
+      },
+      reportExternalPhase: (operationId, phase, state) => {
+        reported.push(`${operationId}:${phase}:${state}`);
+        return Promise.resolve({ accepted: true, operationId });
+      },
       recoverLastInstance: () => {
         recoverCalls += 1;
         return Promise.resolve({ accepted: true });
@@ -135,6 +145,8 @@ void test("publishes VR recovery buttons and routes their presses through the sh
     client.published.some((message) => message.topic.endsWith("steamvr_soft_recovery/config"))
   );
   assert.equal(client.subscriptions.has("raphiiwinutils/shirakami/vr/recovery/hard/set"), true);
+  assert.equal(client.subscriptions.has("raphiiwinutils/shirakami/vr/recovery/prepare/set"), true);
+  assert.equal(client.subscriptions.has("raphiiwinutils/shirakami/vr/recovery/progress/set"), true);
 
   const recoveryButton = client.published.find((message) =>
     message.topic.endsWith("steamvr_soft_recovery/config")
@@ -183,7 +195,27 @@ void test("publishes VR recovery buttons and routes their presses through the sh
       retain: false
     }
   );
-  await waitFor(() => recoverCalls === 1 && startCalls === 1 && hardRecoverCalls === 1);
+  client.emit(
+    "message",
+    "raphiiwinutils/shirakami/vr/recovery/prepare/set",
+    Buffer.from('{"operationId":"soft-1","action":"soft-recover"}'),
+    { retain: false }
+  );
+  client.emit(
+    "message",
+    "raphiiwinutils/shirakami/vr/recovery/progress/set",
+    Buffer.from('{"operationId":"soft-1","phase":"setting-audio-mode","state":"active"}'),
+    { retain: false }
+  );
+  await waitFor(() =>
+    recoverCalls === 1 &&
+    startCalls === 1 &&
+    hardRecoverCalls === 1 &&
+    prepared.length === 1 &&
+    reported.length === 1
+  );
+  assert.deepEqual(prepared, ["soft-recover:soft-1"]);
+  assert.deepEqual(reported, ["soft-1:setting-audio-mode:active"]);
   service.stop();
 });
 
@@ -197,6 +229,8 @@ void test("does not replay retained MQTT VRChat button presses", async () => {
     logger,
     { connect: () => client as unknown as MqttClient, stateStore: new MemoryStateStore() },
     {
+      prepare: () => Promise.resolve({ accepted: true }),
+      reportExternalPhase: () => Promise.resolve({ accepted: true }),
       recoverLastInstance: () => {
         recoverCalls += 1;
         return Promise.resolve({ accepted: true });
