@@ -35,6 +35,15 @@ void test("soft recovery serializes VR stack launch and restores the last instan
     "probe:vrchat"
   ]);
   assert.ok(phases.includes("stopping-vr-stack"));
+  assert.deepEqual(service.getStatus().completedPhases, [
+    "soft-recovering",
+    "stopping-vr-stack",
+    "waiting-for-steam",
+    "waiting-for-steamvr",
+    "waiting-for-oyasumi",
+    "launching-vrchat",
+    "verifying-rejoin"
+  ]);
 });
 
 void test("start waits for each VR stack dependency before launching its dependent", async () => {
@@ -119,6 +128,7 @@ void test("start launches VRChat after SteamVR even when OyasumiVR never becomes
   assert.equal((await service.startVrChat()).accepted, false);
   assert.equal(events.includes("launch:2538150"), true);
   assert.equal(events.includes("launch:438100"), true);
+  assert.equal(service.getStatus().completedPhases?.includes("waiting-for-oyasumi"), false);
 });
 
 void test("start retries when Steam drops the first VRChat launch command", async () => {
@@ -282,6 +292,12 @@ void test("hard recovery remains resumable after another service start", async (
   assert.equal(service.getStatus().phase, "awaiting-rwu-after-boot");
   assert.equal((await service.resumeHardRecovery("hard-1")).accepted, true);
   await waitFor(() => service.getStatus().phase === "completed-with-warning");
+  assert.deepEqual(service.getStatus().completedPhases?.slice(0, 4), [
+    "preparing",
+    "stopping-vr-stack",
+    "reboot-commanded",
+    "awaiting-rwu-after-boot"
+  ]);
   assert.equal(events.includes("matrix"), true);
 });
 

@@ -38,6 +38,7 @@ export interface VrRecoveryStatus {
   instanceId?: string;
   bootMarker?: string;
   activePhases?: VrRecoveryPhase[];
+  completedPhases?: VrRecoveryPhase[];
 }
 
 export interface VrChatRecoveryRequestResult {
@@ -113,13 +114,17 @@ export class VrChatRecoveryService {
     this.status = {
       ...saved,
       activePhases:
-        saved.activePhases ?? (isTerminalPhase(saved.phase) ? [] : [saved.phase])
+        saved.activePhases ?? (isTerminalPhase(saved.phase) ? [] : [saved.phase]),
+      completedPhases: saved.completedPhases ?? legacyCompletedPhases(saved)
     };
     if (saved.action === "hard-recover" && isActiveHardRecoveryPhase(saved.phase)) {
       if (saved.phase === "reboot-commanded") {
         const bootMarker = await this.dependencies.getBootMarker();
         if (saved.bootMarker && saved.bootMarker !== bootMarker) {
-          await this.setStatus({ phase: "awaiting-rwu-after-boot" });
+          await this.setStatus({
+            phase: "awaiting-rwu-after-boot",
+            completedPhases: this.completedPhasesWith("reboot-commanded")
+          });
         } else {
           await this.fail("RaphiiWinUtils restarted without observing the requested Windows reboot");
         }
@@ -243,13 +248,15 @@ export class VrChatRecoveryService {
       instanceId: undefined,
       reason: undefined,
       attempt: undefined,
-      bootMarker: undefined
+      bootMarker: undefined,
+      completedPhases: []
     }, recovery);
     this.throwIfAborted(recovery);
     const instanceId =
       action === "soft-recover" ? await this.captureLastInstanceId(recovery) : undefined;
     await this.setStatus({ instanceId }, recovery);
     try {
+      await this.completePhase(action === "start" ? "starting" : "soft-recovering", recovery);
       await this.stopVrStack(recovery);
       const rejoined = await this.startVrStack(recovery, instanceId);
       await this.setStatus({
@@ -268,10 +275,16 @@ export class VrChatRecoveryService {
     beforeReboot?: () => Promise<void>
   ): Promise<void> {
     const { operationId } = recovery;
-    await this.setStatus({ operationId, action: "hard-recover", phase: "preparing" }, recovery);
+    await this.setStatus({
+      operationId,
+      action: "hard-recover",
+      phase: "preparing",
+      completedPhases: []
+    }, recovery);
     const instanceId = await this.captureLastInstanceId(recovery);
     await this.setStatus({ instanceId }, recovery);
     try {
+      await this.completePhase("preparing", recovery);
       await this.stopVrStack(recovery);
       await this.setStatus({
         phase: "reboot-commanded",
@@ -291,6 +304,7 @@ export class VrChatRecoveryService {
   private async runHardRecoveryResume(recovery: RecoveryOperation): Promise<void> {
     const { operationId } = recovery;
     try {
+      await this.completePhase("awaiting-rwu-after-boot", recovery);
       await this.withActivePhase("waiting-for-desktop", recovery, () =>
         this.sleep(this.config.hardRecovery.desktopSettleMs, recovery)
       );
@@ -646,16 +660,32 @@ export class VrChatRecoveryService {
   ): Promise<T> {
     this.activePhases.add(phase);
     await this.setStatus({ phase, activePhases: [...this.activePhases] }, recovery);
+    let completed = false;
     try {
-      return await task();
+      const result = await task();
+      completed = true;
+      return result;
     } finally {
       this.activePhases.delete(phase);
       const activePhases = [...this.activePhases];
       await this.setStatus(
-        { phase: activePhases.at(-1) ?? this.status.phase, activePhases },
+        {
+          phase: activePhases.at(-1) ?? this.status.phase,
+          activePhases,
+          completedPhases: completed ? this.completedPhasesWith(phase) : this.status.completedPhases
+        },
         recovery
       );
     }
+  }
+
+  private completePhase(phase: VrRecoveryPhase, recovery: RecoveryOperation): Promise<void> {
+    return this.setStatus({ activePhases: [], completedPhases: this.completedPhasesWith(phase) }, recovery);
+  }
+
+  private completedPhasesWith(phase: VrRecoveryPhase): VrRecoveryPhase[] {
+    const completedPhases = this.status.completedPhases ?? [];
+    return completedPhases.includes(phase) ? completedPhases : [...completedPhases, phase];
   }
 
   private async setStatus(
@@ -753,6 +783,19 @@ function completionStatus(
 
 function isActiveHardRecoveryPhase(phase: VrRecoveryPhase): boolean {
   return !isTerminalPhase(phase);
+}
+
+function legacyCompletedPhases(status: VrRecoveryStatus): VrRecoveryPhase[] {
+  if (status.action !== "hard-recover") return [];
+  if (status.phase === "preparing") return [];
+  if (status.phase === "stopping-vr-stack") return ["preparing"];
+  const completed: VrRecoveryPhase[] = ["preparing", "stopping-vr-stack"];
+  if (status.phase === "reboot-commanded") return completed;
+  completed.push("reboot-commanded");
+  if (status.phase === "awaiting-rwu-after-boot") return completed;
+  if (isTerminalPhase(status.phase)) return [];
+  completed.push("awaiting-rwu-after-boot");
+  return completed;
 }
 
 function isTerminalPhase(phase: VrRecoveryPhase): boolean {
