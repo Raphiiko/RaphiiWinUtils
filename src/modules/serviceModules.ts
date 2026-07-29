@@ -17,7 +17,7 @@ export function createServiceModules(
   notifier: Notifier,
   logger: Logger
 ): AppModule[] {
-  const updater = new Updater(config.updater, notifier, logger);
+  const updater = new Updater(config.updater, config.notifications.appName, notifier, logger);
   const channelVolumeService = new ChannelVolumeService(config, logger);
   const audioModeService = new AudioModeService(
     config,

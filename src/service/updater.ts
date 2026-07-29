@@ -16,6 +16,7 @@ interface UpdateCheckRequest {
 export class Updater {
   private readonly log: Logger;
   private readonly config: UpdaterConfig;
+  private readonly taskName: string;
   private readonly notifier: Notifier;
   private readonly checkRequests$ = new Subject<UpdateCheckRequest>();
   private readonly subscriptions = new Subscription();
@@ -26,8 +27,9 @@ export class Updater {
   private lastCheckReason?: string;
   private lastCheckResult?: string;
 
-  constructor(config: UpdaterConfig, notifier: Notifier, logger: Logger) {
+  constructor(config: UpdaterConfig, taskName: string, notifier: Notifier, logger: Logger) {
     this.config = config;
+    this.taskName = taskName;
     this.notifier = notifier;
     this.log = logger.child("updater");
   }
@@ -150,7 +152,7 @@ export class Updater {
         timeoutMs: 180_000
       });
 
-      stageAndRestart(sourceDir, this.config.installDir, remote);
+      stageAndRestart(sourceDir, this.config.installDir, remote, this.taskName);
     } catch (error) {
       this.lastCheckResult = "failed";
       this.log.error("Update check failed", { error: String(error) });
@@ -236,7 +238,12 @@ function getUpdateCompletedMarkerPath(installDir: string): string {
   return join(installDir, ".update-completed.json");
 }
 
-function stageAndRestart(sourceDir: string, installDir: string, revision: string): void {
+function stageAndRestart(
+  sourceDir: string,
+  installDir: string,
+  revision: string,
+  taskName: string
+): void {
   const distDir = join(sourceDir, "dist");
   const scriptPath = join(installDir, "apply-update.ps1");
   const launcherPath = writeLauncherScript(installDir);
@@ -253,6 +260,7 @@ function stageAndRestart(sourceDir: string, installDir: string, revision: string
     `$install = "${ps(installDir)}"`,
     `$revision = "${ps(revision)}"`,
     `$launcherPath = "${ps(launcherPath)}"`,
+    `$taskName = "${ps(taskName)}"`,
     `$logPath = "${ps(logPath)}"`,
     `$completionMarker = "${ps(getUpdateCompletedMarkerPath(installDir))}"`,
     "New-Item -ItemType Directory -Path (Split-Path -Parent $logPath) -Force | Out-Null",
@@ -272,7 +280,9 @@ function stageAndRestart(sourceDir: string, installDir: string, revision: string
     "  Set-Content -LiteralPath (Join-Path $install '.deployed-revision') -Value $revision -Encoding UTF8",
     "  @{ revision = $revision; completedAt = (Get-Date).ToString('o') } | ConvertTo-Json -Compress | Set-Content -LiteralPath $completionMarker -Encoding UTF8",
     '  Write-UpdateLog "Starting updated service at revision $revision"',
-    "  Start-Process -FilePath 'wscript.exe' -ArgumentList @('//B', '//Nologo', $launcherPath) -WorkingDirectory $install -WindowStyle Hidden",
+    "  $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue",
+    "  if (-not $task) { $task = Get-ScheduledTask | Where-Object { @($_.Actions | Where-Object { $_.Execute -ieq 'wscript.exe' -and ([string]$_.Arguments).IndexOf($launcherPath, [StringComparison]::OrdinalIgnoreCase) -ge 0 }).Count -gt 0 } | Select-Object -First 1 }",
+    "  if ($task) { if ($task.State -ne 'Running') { Start-ScheduledTask -InputObject $task } } else { Start-Process -FilePath 'wscript.exe' -ArgumentList @('//B', '//Nologo', $launcherPath) -WorkingDirectory $install -WindowStyle Hidden }",
     "  Write-UpdateLog 'Update handoff complete'",
     "} catch {",
     "  Write-UpdateLog ('Update handoff failed: ' + $_.Exception.ToString())",
