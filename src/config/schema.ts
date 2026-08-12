@@ -204,7 +204,7 @@ export const defaultConfig: AppConfig = {
       },
       iems: {
         name: "IEMs",
-        outputDeviceName: "In Ear Monitors (2- USB-C to 3.5mm Headphone Jack Adapter)",
+        outputDeviceName: "Headphones (2- USB-C to 3.5mm Headphone Jack Adapter)",
         micInputSlot: "WIN1.IN",
         micRoutes: [
           { inputChannel: 1, outputChannel: 1 },

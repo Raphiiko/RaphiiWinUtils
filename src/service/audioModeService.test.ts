@@ -7,7 +7,23 @@ import type {
 } from "../audio/audioEndpointVolumeController.ts";
 import type { AudioModePublisher } from "../mqtt/audioModePublisher.ts";
 import type { Logger } from "../system/logger.ts";
-import { AudioModeService } from "./audioModeService.ts";
+import { AudioModeService, isSameAudioDevice } from "./audioModeService.ts";
+
+void test("accepts a renamed endpoint label but not a different device", () => {
+  const configured = "In Ear Monitors (2- USB-C to 3.5mm Headphone Jack Adapter)";
+
+  assert.equal(
+    isSameAudioDevice("Headphones (2- USB-C to 3.5mm Headphone Jack Adapter)", configured),
+    true
+  );
+  assert.equal(
+    isSameAudioDevice("Bigscreen Beyond (USB-C to 3.5mm Headphone Jack Adapter)", configured),
+    false
+  );
+  assert.equal(isSameAudioDevice("Headset (3- Arctis Nova Pro Wireless)", configured), false);
+  assert.equal(isSameAudioDevice(undefined, configured), false);
+  assert.equal(isSameAudioDevice("Nothing Ear", "Nothing Ear"), true);
+});
 
 const publisher: AudioModePublisher = {
   publishMode: () => Promise.resolve()

@@ -242,7 +242,7 @@ export class AudioModeService {
       await this.delay(this.config.audioModes.engineSettleMs);
 
       actualDeviceName = await this.queryOutputDeviceName();
-      if (actualDeviceName === mode.outputDeviceName) {
+      if (isSameAudioDevice(actualDeviceName, mode.outputDeviceName)) {
         return { attempts: attempt, matrixRestarted };
       }
 
@@ -386,6 +386,20 @@ export class UnknownAudioModeError extends Error {
     super(`Unknown audio mode: ${id}`);
     this.id = id;
   }
+}
+
+// The part in brackets is the driver device name, including the "2-" index that
+// tells two identical adapters apart. The text before it is a user-editable label.
+export function isSameAudioDevice(actual: string | undefined, expected: string): boolean {
+  if (actual === undefined) return false;
+  if (actual === expected) return true;
+
+  const actualDevice = audioDeviceName(actual);
+  return actualDevice !== undefined && actualDevice === audioDeviceName(expected);
+}
+
+function audioDeviceName(endpointName: string): string | undefined {
+  return endpointName.match(/\(([^()]+)\)\s*$/)?.[1]?.trim().toLowerCase();
 }
 
 function escapeMatrixString(value: string): string {
