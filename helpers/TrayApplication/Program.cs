@@ -1,4 +1,5 @@
 using Microsoft.Web.WebView2.WinForms;
+using Microsoft.Win32;
 using System.Runtime.InteropServices;
 
 namespace TrayApplication;
@@ -15,8 +16,11 @@ internal static class Program
 
 internal sealed class TrayContext : ApplicationContext
 {
+    private const int IconRefreshDelay = 2000;
     private readonly NotifyIcon icon;
     private readonly DashboardPopup popup;
+    private readonly System.Windows.Forms.Timer iconRefreshTimer =
+        new() { Interval = IconRefreshDelay };
 
     public TrayContext(string url)
     {
@@ -37,10 +41,43 @@ internal sealed class TrayContext : ApplicationContext
         {
             if (eventArgs.Button == MouseButtons.Left) popup.Toggle();
         };
+        iconRefreshTimer.Tick += (_, _) =>
+        {
+            iconRefreshTimer.Stop();
+            RefreshIcon();
+        };
+        SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+    }
+
+    // Turning every monitor off drops the icon from the shell, and the shell does not
+    // send TaskbarCreated when they come back. Only a fresh Shell_NotifyIcon add returns it.
+    private void OnDisplaySettingsChanged(object? sender, EventArgs eventArgs)
+    {
+        // SystemEvents raises this off the UI thread, and NotifyIcon is not thread safe.
+        try
+        {
+            popup.BeginInvoke(() =>
+            {
+                iconRefreshTimer.Stop();
+                iconRefreshTimer.Start();
+            });
+        }
+        catch (Exception error) when (error is ObjectDisposedException or InvalidOperationException)
+        {
+            // The popup is gone because the app is exiting. There is no icon left to refresh.
+        }
+    }
+
+    private void RefreshIcon()
+    {
+        icon.Visible = false;
+        icon.Visible = true;
     }
 
     protected override void ExitThreadCore()
     {
+        SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+        iconRefreshTimer.Dispose();
         icon.Visible = false;
         icon.Dispose();
         popup.Dispose();
