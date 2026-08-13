@@ -112,6 +112,12 @@ export class DiscordVoiceClient {
     this.log.info("Discord RPC authorized");
   }
 
+  /** False while the user sits in no voice channel, so there is nothing to mute. */
+  async isInVoiceChannel(): Promise<boolean> {
+    const selected = await this.command("GET_SELECTED_VOICE_CHANNEL");
+    return Boolean(selected.data);
+  }
+
   async getMute(): Promise<boolean> {
     const settings = await this.command("GET_VOICE_SETTINGS");
     return Boolean((settings.data as { mute?: boolean } | undefined)?.mute);

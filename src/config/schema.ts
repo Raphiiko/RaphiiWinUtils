@@ -89,6 +89,8 @@ export interface DictationMuteConfig {
   handyLogPath: string;
   /** Handy holds its log open, so the file is polled rather than watched. */
   pollMs: number;
+  /** Holds the mute past Handy's stop chime, which the microphone would otherwise pick up. */
+  unmuteDelayMs: number;
   /** Safety net: unmute anyway when a stop event never arrives. */
   maxMuteMs: number;
   discord: DiscordVoiceConfig;
@@ -276,6 +278,7 @@ export const defaultConfig: AppConfig = {
       "handy.log"
     ),
     pollMs: 250,
+    unmuteDelayMs: 1000,
     maxMuteMs: 120_000,
     discord: {
       clientId: "",

@@ -19,24 +19,38 @@ export interface DictationMuteStatus {
   muted: boolean;
 }
 
+export interface DictationMuteCollaborators {
+  discord?: Pick<
+    DiscordVoiceClient,
+    "isReady" | "connect" | "close" | "isInVoiceChannel" | "getMute" | "setMute"
+  >;
+  watcher?: Pick<HandyLogWatcher, "start" | "stop">;
+}
+
 export class DictationMuteService {
   private readonly config: DictationMuteConfig;
   private readonly log: Logger;
-  private readonly watcher: HandyLogWatcher;
-  private readonly discord: DiscordVoiceClient;
+  private readonly watcher: NonNullable<DictationMuteCollaborators["watcher"]>;
+  private readonly discord: NonNullable<DictationMuteCollaborators["discord"]>;
   private readonly statePath = join(dirname(getConfigPath()), "dictation-mute-state.json");
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   private releaseTimer?: ReturnType<typeof setTimeout>;
+  private unmuteTimer?: ReturnType<typeof setTimeout>;
   private mutedByUs = false;
   private wanted = true;
   private busy: Promise<void> = Promise.resolve();
   private stopped = false;
 
-  constructor(config: DictationMuteConfig, logger: Logger) {
+  constructor(
+    config: DictationMuteConfig,
+    logger: Logger,
+    collaborators: DictationMuteCollaborators = {}
+  ) {
     this.config = config;
     this.log = logger.child("dictation-mute");
-    this.watcher = new HandyLogWatcher(config.handyLogPath, config.pollMs, logger);
-    this.discord = new DiscordVoiceClient(config.discord, logger);
+    this.watcher =
+      collaborators.watcher ?? new HandyLogWatcher(config.handyLogPath, config.pollMs, logger);
+    this.discord = collaborators.discord ?? new DiscordVoiceClient(config.discord, logger);
   }
 
   start(): void {
@@ -54,13 +68,20 @@ export class DictationMuteService {
     this.watcher.start((event) => this.handleEvent(event));
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.stopped = true;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    if (this.releaseTimer) clearTimeout(this.releaseTimer);
-    this.reconnectTimer = undefined;
-    this.releaseTimer = undefined;
+    this.clearTimers();
     this.watcher.stop();
+    // Updates restart the service, so a mute left behind here would outlive the dictation.
+    if (this.mutedByUs && this.discord.isReady) {
+      this.mutedByUs = false;
+      try {
+        await this.discord.setMute(false);
+        this.log.info("Unmuted Discord before shutting down");
+      } catch (error) {
+        this.log.warn("Could not unmute Discord while shutting down", { error: String(error) });
+      }
+    }
     this.discord.close();
   }
 
@@ -71,7 +92,7 @@ export class DictationMuteService {
     this.log.info("Dictation mute toggled", { enabled });
 
     if (!enabled) {
-      this.handleEvent("stop");
+      this.queue("disable", () => this.applyUnmute());
       return;
     }
     await this.connect();
@@ -111,12 +132,30 @@ export class DictationMuteService {
   }
 
   private handleEvent(event: DictationEvent): void {
-    // Serialize, so a fast start/stop pair cannot read the mute state mid-change.
-    this.busy = this.busy
-      .then(() => (event === "start" ? this.onDictationStart() : this.onDictationStop()))
-      .catch((error) => {
-        this.log.warn("Dictation mute step failed", { event, error: String(error) });
-      });
+    if (event === "start") {
+      // A dictation that starts inside the unmute delay keeps the existing mute.
+      if (this.unmuteTimer) clearTimeout(this.unmuteTimer);
+      this.unmuteTimer = undefined;
+      this.queue("start", () => this.onDictationStart());
+      return;
+    }
+
+    if (this.releaseTimer) clearTimeout(this.releaseTimer);
+    this.releaseTimer = undefined;
+    if (!this.mutedByUs || this.unmuteTimer) return;
+
+    // Handy plays its stop chime after the recording ends, and the microphone picks it up.
+    this.unmuteTimer = setTimeout(() => {
+      this.unmuteTimer = undefined;
+      this.queue("stop", () => this.applyUnmute());
+    }, this.config.unmuteDelayMs);
+  }
+
+  /** Serialize, so a fast start/stop pair cannot read the mute state mid-change. */
+  private queue(step: string, run: () => Promise<void>): void {
+    this.busy = this.busy.then(run).catch((error) => {
+      this.log.warn("Dictation mute step failed", { step, error: String(error) });
+    });
   }
 
   private async onDictationStart(): Promise<void> {
@@ -125,7 +164,15 @@ export class DictationMuteService {
       await this.connect();
       if (!this.discord.isReady) return;
     }
-    if (this.mutedByUs) return;
+    if (this.mutedByUs) {
+      this.armSafetyRelease();
+      return;
+    }
+
+    if (!(await this.discord.isInVoiceChannel())) {
+      this.log.info("Not in a Discord voice channel; leaving the microphone alone");
+      return;
+    }
 
     // Leave a mute the user set themselves alone, both now and at dictation stop.
     if (await this.discord.getMute()) {
@@ -139,9 +186,7 @@ export class DictationMuteService {
     this.log.info("Muted Discord for dictation");
   }
 
-  private async onDictationStop(): Promise<void> {
-    if (this.releaseTimer) clearTimeout(this.releaseTimer);
-    this.releaseTimer = undefined;
+  private async applyUnmute(): Promise<void> {
     if (!this.mutedByUs) return;
 
     this.mutedByUs = false;
@@ -159,8 +204,17 @@ export class DictationMuteService {
       this.log.warn("Dictation ran past the mute limit; unmuting", {
         maxMuteMs: this.config.maxMuteMs
       });
-      this.handleEvent("stop");
+      this.queue("safety-release", () => this.applyUnmute());
     }, this.config.maxMuteMs);
+  }
+
+  private clearTimers(): void {
+    for (const timer of [this.reconnectTimer, this.releaseTimer, this.unmuteTimer]) {
+      if (timer) clearTimeout(timer);
+    }
+    this.reconnectTimer = undefined;
+    this.releaseTimer = undefined;
+    this.unmuteTimer = undefined;
   }
 
   private async restoreWanted(): Promise<void> {

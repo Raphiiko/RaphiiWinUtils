@@ -18,7 +18,12 @@ The clipboard workflow listens for text clipboard changes and rewrites social li
 
 While the Handy dictation app is listening, the service mutes the Discord microphone and unmutes it
 again when dictation stops or is cancelled. A mute you set yourself is left alone: the service reads
-the mute state at dictation start and only restores what it changed.
+the mute state at dictation start and only restores what it changed. It does nothing while you sit
+in no voice channel.
+
+The unmute waits `dictationMute.unmuteDelayMs` (1s), because Handy plays its stop chime after the
+recording ends and the microphone picks it up. A dictation that starts inside that window keeps the
+mute instead of toggling it.
 
 Handy has no event API, so the service tails Handy's own log at
 `%LOCALAPPDATA%\com.pais.handy\logs\handy.log`. The start marker exists only while Handy's log level
