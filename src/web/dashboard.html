@@ -1329,6 +1329,21 @@
         <div class="view-head">
           <h1>Audio</h1>
           <div class="chips">
+            <button class="btn btn-ghost btn-sm" id="dictationAuth" type="button" hidden>
+              Reauthorize Discord
+            </button>
+            <button
+              class="btn btn-ghost btn-sm"
+              id="dictationToggle"
+              type="button"
+              aria-pressed="false"
+              hidden
+            >
+              Dictation mute
+            </button>
+            <span class="chip" id="dictationChip" hidden
+              ><i id="dictationDot"></i><span id="dictationStatus">…</span></span
+            >
             <span class="chip"><i id="audioHealthDot"></i><span id="audioHealthText">…</span></span>
           </div>
         </div>
@@ -1340,18 +1355,6 @@
           <section class="card">
             <div class="card-label">Channel levels</div>
             <div class="vols" id="volList"></div>
-          </section>
-          <section class="card">
-            <div class="card-label">Dictation</div>
-            <div class="chips">
-              <button class="btn btn-ghost" id="dictationToggle" type="button" aria-pressed="false">
-                Mute Discord while dictating
-              </button>
-              <span class="chip" id="dictationStatus">…</span>
-              <button class="btn btn-ghost btn-sm" id="dictationAuth" type="button">
-                Reauthorize Discord
-              </button>
-            </div>
           </section>
         </div>
       </section>
@@ -1684,16 +1687,25 @@
 
       function renderDictation(status) {
         const toggle = el("dictationToggle");
-        const label = el("dictationStatus");
-        toggle.disabled = !status?.available;
-        toggle.setAttribute("aria-pressed", String(Boolean(status?.enabled)));
-        toggle.className = status?.enabled ? "btn btn-primary" : "btn btn-ghost";
-        el("dictationAuth").hidden = !status?.available;
-        if (!status) label.textContent = "Unavailable";
-        else if (!status.available) label.textContent = "Disabled in config";
-        else if (!status.authorized) label.textContent = "Discord not authorized";
-        else if (!status.enabled) label.textContent = "Off";
-        else label.textContent = status.connected ? "Watching Handy" : "Discord offline";
+        const chip = el("dictationChip");
+        const available = Boolean(status?.available);
+        const ready = Boolean(status?.enabled && status.connected);
+        toggle.hidden = !available;
+        chip.hidden = !available;
+        el("dictationAuth").hidden = !available || (status.authorized && ready);
+        if (!available) return;
+
+        toggle.disabled = false;
+        toggle.setAttribute("aria-pressed", String(Boolean(status.enabled)));
+        toggle.className = status.enabled ? "btn btn-primary btn-sm" : "btn btn-ghost btn-sm";
+        el("dictationDot").classList.toggle("ok", ready);
+        el("dictationStatus").textContent = !status.authorized
+          ? "Discord not authorized"
+          : !status.enabled
+            ? "Dictation mute off"
+            : status.connected
+              ? "Dictation mute ready"
+              : "Discord offline";
       }
 
       el("dictationToggle").onclick = async () => {

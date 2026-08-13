@@ -22,7 +22,9 @@ the mute state at dictation start and only restores what it changed.
 
 Handy has no event API, so the service tails Handy's own log at
 `%LOCALAPPDATA%\com.pais.handy\logs\handy.log`. The start marker exists only while Handy's log level
-is `debug`, so leave that setting on.
+is `debug`, so leave that setting on. Handy keeps the file open and Windows raises no change
+notification for a writer that holds its handle, so the file size is polled every
+`dictationMute.pollMs` instead.
 
 Discord is controlled over its local RPC pipe, which needs a Discord application:
 

@@ -87,6 +87,8 @@ export interface DictationMuteConfig {
   enabled: boolean;
   /** Handy writes the start marker only while its own log level is debug. */
   handyLogPath: string;
+  /** Handy holds its log open, so the file is polled rather than watched. */
+  pollMs: number;
   /** Safety net: unmute anyway when a stop event never arrives. */
   maxMuteMs: number;
   discord: DiscordVoiceConfig;
@@ -273,6 +275,7 @@ export const defaultConfig: AppConfig = {
       "logs",
       "handy.log"
     ),
+    pollMs: 250,
     maxMuteMs: 120_000,
     discord: {
       clientId: "",

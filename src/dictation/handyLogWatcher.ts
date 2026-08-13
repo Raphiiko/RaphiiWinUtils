@@ -1,8 +1,6 @@
-import { existsSync, watch, type FSWatcher } from "node:fs";
+import { existsSync } from "node:fs";
 import { open, stat } from "node:fs/promises";
 import { Logger } from "../system/logger.ts";
-
-const retryDelayMs = 5000;
 
 export type DictationEvent = "start" | "stop";
 
@@ -19,76 +17,52 @@ export function parseHandyLogLine(line: string): DictationEvent | undefined {
 
 export class HandyLogWatcher {
   private readonly path: string;
+  private readonly pollMs: number;
   private readonly log: Logger;
-  private watcher?: FSWatcher;
-  private retryTimer?: ReturnType<typeof setTimeout>;
+  private timer?: ReturnType<typeof setInterval>;
   private onEvent: (event: DictationEvent) => void = () => {};
-  private offset = 0;
+  private offset?: number;
   private remainder = "";
   private reading = false;
-  private readAgain = false;
   private stopped = false;
 
-  constructor(path: string, logger: Logger) {
+  constructor(path: string, pollMs: number, logger: Logger) {
     this.path = path;
+    this.pollMs = pollMs;
     this.log = logger.child("handy");
   }
 
   start(onEvent: (event: DictationEvent) => void): void {
     this.stopped = false;
     this.onEvent = onEvent;
-    void this.attach();
+    // Handy keeps its log file open, and Windows raises no change notification for a writer
+    // that holds its handle, so fs.watch never fires here. Polling the size does see the writes.
+    this.timer = setInterval(() => void this.readNewLines(), this.pollMs);
+    this.log.info("Watching Handy log", { path: this.path, pollMs: this.pollMs });
   }
 
   stop(): void {
     this.stopped = true;
-    if (this.retryTimer) clearTimeout(this.retryTimer);
-    this.retryTimer = undefined;
-    this.watcher?.close();
-    this.watcher = undefined;
-  }
-
-  private async attach(): Promise<void> {
-    if (this.stopped) return;
-
-    if (!existsSync(this.path)) {
-      this.scheduleRetry("Handy log not found");
-      return;
-    }
-
-    try {
-      // Only react to what happens from now on; the file holds days of past dictations.
-      this.offset = (await stat(this.path)).size;
-      this.remainder = "";
-      this.watcher = watch(this.path, (eventType) => {
-        if (eventType === "rename") {
-          this.watcher?.close();
-          this.watcher = undefined;
-          this.scheduleRetry("Handy log was replaced");
-          return;
-        }
-        void this.readNewLines();
-      });
-      this.watcher.on("error", (error) => {
-        this.watcher?.close();
-        this.watcher = undefined;
-        this.scheduleRetry(`Handy log watch failed: ${String(error)}`);
-      });
-      this.log.info("Watching Handy log", { path: this.path });
-    } catch (error) {
-      this.scheduleRetry(`Could not watch Handy log: ${String(error)}`);
-    }
+    if (this.timer) clearInterval(this.timer);
+    this.timer = undefined;
   }
 
   private async readNewLines(): Promise<void> {
-    if (this.reading) {
-      this.readAgain = true;
+    if (this.reading || this.stopped) return;
+    if (!existsSync(this.path)) {
+      this.offset = undefined;
       return;
     }
 
     this.reading = true;
     try {
       const size = (await stat(this.path)).size;
+      if (this.offset === undefined) {
+        // Only react to what happens from now on; the file holds days of past dictations.
+        this.offset = size;
+        this.remainder = "";
+        return;
+      }
       // Handy truncates its log on start, which would otherwise leave us reading past the end.
       if (size < this.offset) {
         this.offset = 0;
@@ -109,10 +83,6 @@ export class HandyLogWatcher {
       this.log.warn("Failed to read Handy log", { error: String(error) });
     } finally {
       this.reading = false;
-      if (this.readAgain) {
-        this.readAgain = false;
-        void this.readNewLines();
-      }
     }
   }
 
@@ -123,15 +93,5 @@ export class HandyLogWatcher {
       const event = parseHandyLogLine(line);
       if (event) this.onEvent(event);
     }
-  }
-
-  private scheduleRetry(reason: string): void {
-    if (this.stopped || this.retryTimer) return;
-
-    this.log.warn(reason, { retryDelayMs, path: this.path });
-    this.retryTimer = setTimeout(() => {
-      this.retryTimer = undefined;
-      void this.attach();
-    }, retryDelayMs);
   }
 }

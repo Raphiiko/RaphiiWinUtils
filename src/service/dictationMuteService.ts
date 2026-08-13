@@ -36,7 +36,7 @@ export class DictationMuteService {
   constructor(config: DictationMuteConfig, logger: Logger) {
     this.config = config;
     this.log = logger.child("dictation-mute");
-    this.watcher = new HandyLogWatcher(config.handyLogPath, logger);
+    this.watcher = new HandyLogWatcher(config.handyLogPath, config.pollMs, logger);
     this.discord = new DiscordVoiceClient(config.discord, logger);
   }
 
@@ -136,14 +136,14 @@ export class DictationMuteService {
 
     // Leave a mute the user set themselves alone, both now and at dictation stop.
     if (await this.discord.getMute()) {
-      this.log.debug("Discord already muted; leaving it alone");
+      this.log.info("Discord already muted; leaving it alone");
       return;
     }
 
     await this.discord.setMute(true);
     this.mutedByUs = true;
     this.armSafetyRelease();
-    this.log.debug("Muted Discord for dictation");
+    this.log.info("Muted Discord for dictation");
   }
 
   private async onDictationStop(): Promise<void> {
@@ -155,7 +155,7 @@ export class DictationMuteService {
     if (!this.discord.isReady) return;
 
     await this.discord.setMute(false);
-    this.log.debug("Unmuted Discord after dictation");
+    this.log.info("Unmuted Discord after dictation");
   }
 
   /** A missed stop event must never leave the microphone muted for the rest of the call. */
