@@ -1,9 +1,12 @@
+import { join } from "node:path";
+
 export interface AppConfig {
   matrix: MatrixConfig;
   audio: AudioConfig;
   audioModes: AudioModesConfig;
   mqtt: MqttConfig;
   clipboard: ClipboardAutomationConfig;
+  dictationMute: DictationMuteConfig;
   xsOverlayRecovery: XsOverlayRecoveryConfig;
   vrChatRecovery: VrChatRecoveryConfig;
   vrStackStartup: VrStackStartupConfig;
@@ -77,6 +80,22 @@ export interface MqttConfig {
 export interface ClipboardAutomationConfig {
   enabled: boolean;
   debounceMs: number;
+}
+
+/** Mutes the Discord microphone while Handy is listening, so dictation stays out of the call. */
+export interface DictationMuteConfig {
+  enabled: boolean;
+  /** Handy writes the start marker only while its own log level is debug. */
+  handyLogPath: string;
+  /** Safety net: unmute anyway when a stop event never arrives. */
+  maxMuteMs: number;
+  discord: DiscordVoiceConfig;
+}
+
+export interface DiscordVoiceConfig {
+  clientId: string;
+  /** Discord application secret. Keep this only in the local runtime config. */
+  clientSecret: string;
 }
 
 export interface XsOverlayRecoveryConfig {
@@ -245,6 +264,20 @@ export const defaultConfig: AppConfig = {
   clipboard: {
     enabled: true,
     debounceMs: 100
+  },
+  dictationMute: {
+    enabled: true,
+    handyLogPath: join(
+      process.env.LOCALAPPDATA ?? join(process.env.USERPROFILE ?? ".", "AppData", "Local"),
+      "com.pais.handy",
+      "logs",
+      "handy.log"
+    ),
+    maxMuteMs: 120_000,
+    discord: {
+      clientId: "",
+      clientSecret: ""
+    }
   },
   xsOverlayRecovery: {
     enabled: true,

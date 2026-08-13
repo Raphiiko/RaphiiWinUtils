@@ -14,6 +14,7 @@ import {
   InvalidAudioVolumeError,
   UnknownAudioChannelError
 } from "./channelVolumeService.ts";
+import type { DictationMuteService } from "./dictationMuteService.ts";
 import type { Updater } from "./updater.ts";
 
 export class ControlServer {
@@ -23,6 +24,7 @@ export class ControlServer {
   private readonly updater: Updater;
   private readonly audioModes: AudioModeService;
   private readonly channelVolumes: ChannelVolumeService;
+  private readonly dictationMute: DictationMuteService;
   private readonly logger: Logger;
   private app?: { stop: () => unknown };
 
@@ -31,12 +33,14 @@ export class ControlServer {
     updater: Updater,
     audioModes: AudioModeService,
     channelVolumes: ChannelVolumeService,
+    dictationMute: DictationMuteService,
     logger: Logger
   ) {
     this.config = config;
     this.updater = updater;
     this.audioModes = audioModes;
     this.channelVolumes = channelVolumes;
+    this.dictationMute = dictationMute;
     this.logger = logger;
     this.log = logger.child("control");
   }
@@ -89,6 +93,31 @@ export class ControlServer {
           })
         }
       )
+      .get("/dictation-mute", () => this.dictationMute.getStatus())
+      .post(
+        "/dictation-mute",
+        async ({ body }) => {
+          await this.dictationMute.setEnabled(body.enabled);
+          return this.dictationMute.getStatus();
+        },
+        {
+          body: t.Object({
+            enabled: t.Boolean()
+          })
+        }
+      )
+      // Discord shows the consent popup in its own window, so this only works at the machine.
+      .post("/dictation-mute/authorize", async ({ set }) => {
+        try {
+          await this.dictationMute.authorize();
+          set.status = 202;
+          return { authorized: true, status: this.dictationMute.getStatus() };
+        } catch (error) {
+          set.status = 502;
+          this.log.error("Discord authorization failed", { error: String(error) });
+          return { authorized: false, error: String(error) };
+        }
+      })
       .get("/audio/modes", async () => ({
         modes: this.audioModes.listModes(),
         // The confirmed mode is persisted by the MQTT sync; reading the same file keeps the

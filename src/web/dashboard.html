@@ -1341,6 +1341,18 @@
             <div class="card-label">Channel levels</div>
             <div class="vols" id="volList"></div>
           </section>
+          <section class="card">
+            <div class="card-label">Dictation</div>
+            <div class="chips">
+              <button class="btn btn-ghost" id="dictationToggle" type="button" aria-pressed="false">
+                Mute Discord while dictating
+              </button>
+              <span class="chip" id="dictationStatus">…</span>
+              <button class="btn btn-ghost btn-sm" id="dictationAuth" type="button">
+                Reauthorize Discord
+              </button>
+            </div>
+          </section>
         </div>
       </section>
 
@@ -1401,14 +1413,17 @@
                     multiple
                   />
                 </label>
-                <button class="btn btn-sm" id="savePresetOpen">
-                  Save preset
-                </button>
+                <button class="btn btn-sm" id="savePresetOpen">Save preset</button>
               </div>
               <form class="preset-save" id="presetSaveForm" hidden>
                 <label for="presetName">
                   Preset name
-                  <input class="input" id="presetName" placeholder="e.g. RetroAlley" autocomplete="off" />
+                  <input
+                    class="input"
+                    id="presetName"
+                    placeholder="e.g. RetroAlley"
+                    autocomplete="off"
+                  />
                 </label>
                 <button class="btn btn-primary" id="savePreset" type="submit">Save preset</button>
                 <button class="btn" id="cancelPresetSave" type="button">Cancel</button>
@@ -1645,15 +1660,17 @@
       async function refreshAudio() {
         clearTimeout(audioTimer);
         try {
-          const [health, modes, volumes] = await Promise.all([
+          const [health, modes, volumes, dictation] = await Promise.all([
             call("/health").catch(() => null),
             call("/audio/modes"),
-            call("/audio/volumes")
+            call("/audio/volumes"),
+            call("/dictation-mute").catch(() => null)
           ]);
           setHealth("audioHealthDot", "audioHealthText", health);
           state.modes = modes.modes ?? [];
           state.activeMode = modes.active ?? null;
           renderModes();
+          renderDictation(dictation);
           if (!interacting) renderVolumes(volumes.channels ?? []);
         } catch (error) {
           setHealth("audioHealthDot", "audioHealthText", null);
@@ -1664,6 +1681,46 @@
           audioTimer = setTimeout(refreshAudio, 5000);
         }
       }
+
+      function renderDictation(status) {
+        const toggle = el("dictationToggle");
+        const label = el("dictationStatus");
+        toggle.disabled = !status?.available;
+        toggle.setAttribute("aria-pressed", String(Boolean(status?.enabled)));
+        toggle.className = status?.enabled ? "btn btn-primary" : "btn btn-ghost";
+        el("dictationAuth").hidden = !status?.available;
+        if (!status) label.textContent = "Unavailable";
+        else if (!status.available) label.textContent = "Disabled in config";
+        else if (!status.authorized) label.textContent = "Discord not authorized";
+        else if (!status.enabled) label.textContent = "Off";
+        else label.textContent = status.connected ? "Watching Handy" : "Discord offline";
+      }
+
+      el("dictationToggle").onclick = async () => {
+        const enabled = el("dictationToggle").getAttribute("aria-pressed") !== "true";
+        el("dictationToggle").disabled = true;
+        try {
+          renderDictation(await postJson("/dictation-mute", { enabled }));
+          say(enabled ? "Discord mutes while you dictate." : "Dictation mute off.");
+        } catch (error) {
+          say(error.message, true);
+          refreshAudio();
+        }
+      };
+
+      el("dictationAuth").onclick = async () => {
+        el("dictationAuth").disabled = true;
+        say("Accept the authorization prompt in Discord…");
+        try {
+          const result = await postJson("/dictation-mute/authorize", {});
+          renderDictation(result.status);
+          say("Discord authorized.");
+        } catch (error) {
+          say(error.message, true);
+        } finally {
+          el("dictationAuth").disabled = false;
+        }
+      };
 
       const modeIcons = {
         mic: '<path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z"/><path d="M8 21h4M10 15v6"/>',

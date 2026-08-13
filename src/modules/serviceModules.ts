@@ -4,6 +4,7 @@ import { ClipboardAutomationService } from "../service/clipboardAutomationServic
 import { AudioModeService } from "../service/audioModeService.ts";
 import { ChannelVolumeService } from "../service/channelVolumeService.ts";
 import { ControlServer } from "../service/controlServer.ts";
+import { DictationMuteService } from "../service/dictationMuteService.ts";
 import { TrayApplication } from "../service/trayApplication.ts";
 import { Updater } from "../service/updater.ts";
 import { XsOverlayRecoveryService } from "../service/xsOverlayRecoveryService.ts";
@@ -38,11 +39,13 @@ export function createServiceModules(
     vrChatRecoveryService
   );
   audioModeService.setPublisher(mqttAudioSync);
+  const dictationMuteService = new DictationMuteService(config.dictationMute, logger);
   const controlServer = new ControlServer(
     config.control,
     updater,
     audioModeService,
     channelVolumeService,
+    dictationMuteService,
     logger
   );
   const trayApplication = new TrayApplication(config.control, logger);
@@ -70,6 +73,7 @@ export function createServiceModules(
     }),
     serviceModule("tray", trayApplication),
     serviceModule("clipboard-automations", clipboardAutomationService),
+    serviceModule("dictation-mute", dictationMuteService),
     serviceModule("xsoverlay-recovery", xsOverlayRecoveryService)
   ];
 }

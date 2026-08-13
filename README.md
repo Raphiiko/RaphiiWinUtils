@@ -14,6 +14,33 @@ The clipboard workflow listens for text clipboard changes and rewrites social li
 - `instagram.com` post/reel/tv links -> `kkinstagram.com`
 - `pixiv.net` artwork links -> `phixiv.net`
 
+## Dictation Mute
+
+While the Handy dictation app is listening, the service mutes the Discord microphone and unmutes it
+again when dictation stops or is cancelled. A mute you set yourself is left alone: the service reads
+the mute state at dictation start and only restores what it changed.
+
+Handy has no event API, so the service tails Handy's own log at
+`%LOCALAPPDATA%\com.pais.handy\logs\handy.log`. The start marker exists only while Handy's log level
+is `debug`, so leave that setting on.
+
+Discord is controlled over its local RPC pipe, which needs a Discord application:
+
+1. Create an app at <https://discord.com/developers/applications>. The owner is whitelisted for RPC
+   automatically.
+2. Add `http://localhost` as an OAuth2 redirect URI.
+3. Put the client id and secret under `dictationMute.discord` in
+   `%APPDATA%\RaphiiWinUtils\config.json`.
+4. Open the dashboard, go to Audio, and press **Reauthorize Discord**. Accept the prompt Discord
+   shows. The refresh token is stored in `%APPDATA%\RaphiiWinUtils\discord-tokens.json`.
+
+Repeat step 4 whenever Discord drops the authorization. The Audio card also carries the on/off
+toggle, which survives a service restart. `dictationMute.maxMuteMs` unmutes anyway when a stop event
+never arrives.
+
+Discord allows one RPC voice-settings controller at a time, so this can conflict with other tools
+that set voice settings over RPC.
+
 ## XSOverlay Crash Recovery
 
 When SteamVR's `vrmonitor.exe` is running, the service watches for the primary `XSOverlay.exe`
@@ -130,6 +157,9 @@ GET  http://127.0.0.1:17642/audio/modes
 POST http://127.0.0.1:17642/audio/modes/:id
 GET  http://127.0.0.1:17642/audio/volumes
 POST http://127.0.0.1:17642/audio/volumes/:name
+GET  http://127.0.0.1:17642/dictation-mute
+POST http://127.0.0.1:17642/dictation-mute                      { "enabled": true }
+POST http://127.0.0.1:17642/dictation-mute/authorize
 GET  http://127.0.0.1:17642/api/wallpaper/monitors
 PUT  http://127.0.0.1:17642/api/wallpaper/hidden
 GET  http://127.0.0.1:17642/api/wallpaper/library
@@ -142,6 +172,7 @@ POST http://127.0.0.1:17642/api/wallpaper/apply
 ```
 
 The `POST /update/check` route queues one self-update check. If a check is already running it returns `409` and leaves the running check alone.
+The `POST /dictation-mute/authorize` route makes Discord show a consent prompt, so it only succeeds while someone is at the machine.
 The volume endpoint expects `{ "volumePercent": 0..100 }` and remains localhost-only.
 
 ## Home Assistant VR Recovery

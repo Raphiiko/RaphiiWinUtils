@@ -43,6 +43,11 @@ function mergeConfig(base: AppConfig, override: Partial<AppConfig>): AppConfig {
     },
     mqtt: { ...base.mqtt, ...override.mqtt },
     clipboard: { ...base.clipboard, ...override.clipboard },
+    dictationMute: {
+      ...base.dictationMute,
+      ...override.dictationMute,
+      discord: { ...base.dictationMute.discord, ...override.dictationMute?.discord }
+    },
     xsOverlayRecovery: { ...base.xsOverlayRecovery, ...override.xsOverlayRecovery },
     vrChatRecovery: { ...base.vrChatRecovery, ...override.vrChatRecovery },
     vrStackStartup: {
