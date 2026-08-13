@@ -16,7 +16,6 @@ export interface DictationMuteStatus {
   available: boolean;
   enabled: boolean;
   connected: boolean;
-  authorized: boolean;
   muted: boolean;
 }
 
@@ -65,11 +64,6 @@ export class DictationMuteService {
     this.discord.close();
   }
 
-  /** Runs the Discord consent flow again. The user must accept the popup in Discord. */
-  async authorize(): Promise<void> {
-    await this.discord.authorize();
-  }
-
   /** Live toggle from the dashboard. Survives a service restart. */
   async setEnabled(enabled: boolean): Promise<void> {
     this.wanted = enabled;
@@ -88,7 +82,6 @@ export class DictationMuteService {
       available: this.config.enabled,
       enabled: this.config.enabled && this.wanted,
       connected: this.discord.isReady,
-      authorized: this.discord.hasStoredAuthorization(),
       muted: this.mutedByUs
     };
   }
@@ -100,7 +93,7 @@ export class DictationMuteService {
       await this.discord.connect();
     } catch (error) {
       if (error instanceof DiscordAuthorizationRequiredError) {
-        this.log.warn("Discord authorization needed", { error: error.message });
+        this.log.warn("Waiting on Discord authorization", { error: error.message });
       } else {
         this.log.info("Discord RPC not available yet", { error: String(error) });
       }

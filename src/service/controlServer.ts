@@ -106,18 +106,6 @@ export class ControlServer {
           })
         }
       )
-      // Discord shows the consent popup in its own window, so this only works at the machine.
-      .post("/dictation-mute/authorize", async ({ set }) => {
-        try {
-          await this.dictationMute.authorize();
-          set.status = 202;
-          return { authorized: true, status: this.dictationMute.getStatus() };
-        } catch (error) {
-          set.status = 502;
-          this.log.error("Discord authorization failed", { error: String(error) });
-          return { authorized: false, error: String(error) };
-        }
-      })
       .get("/audio/modes", async () => ({
         modes: this.audioModes.listModes(),
         // The confirmed mode is persisted by the MQTT sync; reading the same file keeps the

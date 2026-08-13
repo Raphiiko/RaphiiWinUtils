@@ -222,6 +222,26 @@
         background: var(--mint);
         box-shadow: 0 0 10px var(--mint);
       }
+      button.chip {
+        cursor: pointer;
+        font: inherit;
+        font-size: 0.8125rem;
+        transition:
+          border-color 0.15s ease,
+          color 0.15s ease;
+      }
+      button.chip:hover:not(:disabled) {
+        border-color: var(--edge-hi);
+        color: var(--text);
+      }
+      button.chip[aria-pressed="true"] {
+        color: var(--text);
+        border-color: var(--indigo);
+        background: var(--glass-hi);
+      }
+      button.chip:disabled {
+        cursor: default;
+      }
 
       .card {
         display: flex;
@@ -1329,22 +1349,9 @@
         <div class="view-head">
           <h1>Audio</h1>
           <div class="chips">
-            <button class="btn btn-ghost btn-sm" id="dictationAuth" type="button" hidden>
-              Reauthorize Discord
+            <button class="chip" id="dictationToggle" type="button" aria-pressed="false" hidden>
+              <i id="dictationDot"></i><span id="dictationStatus">…</span>
             </button>
-            <button
-              class="btn btn-ghost btn-sm"
-              id="dictationToggle"
-              type="button"
-              aria-pressed="false"
-              hidden
-            >
-              Dictation mute
-            </button>
-            <span class="chip" id="dictationChip" hidden
-              ><i id="dictationDot"></i><span id="dictationStatus">…</span></span
-            >
-            <span class="chip"><i id="audioHealthDot"></i><span id="audioHealthText">…</span></span>
           </div>
         </div>
         <div class="audio-grid">
@@ -1663,20 +1670,17 @@
       async function refreshAudio() {
         clearTimeout(audioTimer);
         try {
-          const [health, modes, volumes, dictation] = await Promise.all([
-            call("/health").catch(() => null),
+          const [modes, volumes, dictation] = await Promise.all([
             call("/audio/modes"),
             call("/audio/volumes"),
             call("/dictation-mute").catch(() => null)
           ]);
-          setHealth("audioHealthDot", "audioHealthText", health);
           state.modes = modes.modes ?? [];
           state.activeMode = modes.active ?? null;
           renderModes();
           renderDictation(dictation);
           if (!interacting) renderVolumes(volumes.channels ?? []);
         } catch (error) {
-          setHealth("audioHealthDot", "audioHealthText", null);
           say(error.message, true);
         }
         // Levels and mode can change from the Stream Deck or HA; keep the panel live while shown.
@@ -1687,25 +1691,18 @@
 
       function renderDictation(status) {
         const toggle = el("dictationToggle");
-        const chip = el("dictationChip");
-        const available = Boolean(status?.available);
-        const ready = Boolean(status?.enabled && status.connected);
-        toggle.hidden = !available;
-        chip.hidden = !available;
-        el("dictationAuth").hidden = !available || (status.authorized && ready);
-        if (!available) return;
+        toggle.hidden = !status?.available;
+        if (!status?.available) return;
 
+        const on = Boolean(status.enabled);
         toggle.disabled = false;
-        toggle.setAttribute("aria-pressed", String(Boolean(status.enabled)));
-        toggle.className = status.enabled ? "btn btn-primary btn-sm" : "btn btn-ghost btn-sm";
-        el("dictationDot").classList.toggle("ok", ready);
-        el("dictationStatus").textContent = !status.authorized
-          ? "Discord not authorized"
-          : !status.enabled
-            ? "Dictation mute off"
-            : status.connected
-              ? "Dictation mute ready"
-              : "Discord offline";
+        toggle.setAttribute("aria-pressed", String(on));
+        el("dictationDot").classList.toggle("ok", on && status.connected);
+        el("dictationStatus").textContent = !on
+          ? "Dictation mute off"
+          : status.connected
+            ? "Dictation mute on"
+            : "Dictation mute · Discord offline";
       }
 
       el("dictationToggle").onclick = async () => {
@@ -1717,20 +1714,6 @@
         } catch (error) {
           say(error.message, true);
           refreshAudio();
-        }
-      };
-
-      el("dictationAuth").onclick = async () => {
-        el("dictationAuth").disabled = true;
-        say("Accept the authorization prompt in Discord…");
-        try {
-          const result = await postJson("/dictation-mute/authorize", {});
-          renderDictation(result.status);
-          say("Discord authorized.");
-        } catch (error) {
-          say(error.message, true);
-        } finally {
-          el("dictationAuth").disabled = false;
         }
       };
 

@@ -33,12 +33,14 @@ Discord is controlled over its local RPC pipe, which needs a Discord application
 2. Add `http://localhost` as an OAuth2 redirect URI.
 3. Put the client id and secret under `dictationMute.discord` in
    `%APPDATA%\RaphiiWinUtils\config.json`.
-4. Open the dashboard, go to Audio, and press **Reauthorize Discord**. Accept the prompt Discord
-   shows. The refresh token is stored in `%APPDATA%\RaphiiWinUtils\discord-tokens.json`.
 
-Repeat step 4 whenever Discord drops the authorization. The Audio card also carries the on/off
-toggle, which survives a service restart. `dictationMute.maxMuteMs` unmutes anyway when a stop event
-never arrives.
+The service asks for consent by itself whenever it has no usable token, so all you ever do is accept
+the prompt Discord shows. The refresh token is stored in
+`%APPDATA%\RaphiiWinUtils\discord-tokens.json` and renewed on every connect. A dismissed prompt is
+not repeated for five minutes.
+
+The Audio view header carries the on/off toggle, which survives a service restart.
+`dictationMute.maxMuteMs` unmutes anyway when a stop event never arrives.
 
 Discord allows one RPC voice-settings controller at a time, so this can conflict with other tools
 that set voice settings over RPC.
@@ -161,7 +163,6 @@ GET  http://127.0.0.1:17642/audio/volumes
 POST http://127.0.0.1:17642/audio/volumes/:name
 GET  http://127.0.0.1:17642/dictation-mute
 POST http://127.0.0.1:17642/dictation-mute                      { "enabled": true }
-POST http://127.0.0.1:17642/dictation-mute/authorize
 GET  http://127.0.0.1:17642/api/wallpaper/monitors
 PUT  http://127.0.0.1:17642/api/wallpaper/hidden
 GET  http://127.0.0.1:17642/api/wallpaper/library
@@ -174,7 +175,6 @@ POST http://127.0.0.1:17642/api/wallpaper/apply
 ```
 
 The `POST /update/check` route queues one self-update check. If a check is already running it returns `409` and leaves the running check alone.
-The `POST /dictation-mute/authorize` route makes Discord show a consent prompt, so it only succeeds while someone is at the machine.
 The volume endpoint expects `{ "volumePercent": 0..100 }` and remains localhost-only.
 
 ## Home Assistant VR Recovery

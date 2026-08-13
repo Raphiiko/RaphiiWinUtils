@@ -9,6 +9,8 @@ import { DiscordIpcConnection } from "./discordIpc.ts";
 const tokenEndpoint = "https://discord.com/api/oauth2/token";
 const redirectUri = "http://localhost";
 const scopes = ["rpc", "rpc.voice.read", "rpc.voice.write"];
+/** A dismissed consent prompt must not come back on every reconnect. */
+const authorizeCooldownMs = 5 * 60_000;
 
 export class DiscordAuthorizationRequiredError extends Error {}
 
@@ -29,6 +31,7 @@ export class DiscordVoiceClient {
   private readonly tokenPath = join(dirname(getConfigPath()), "discord-tokens.json");
   private connection?: DiscordIpcConnection;
   private authenticated = false;
+  private lastAuthorizeAt = 0;
 
   constructor(config: DiscordVoiceConfig, logger: Logger) {
     this.config = config;
@@ -39,26 +42,37 @@ export class DiscordVoiceClient {
     return this.authenticated;
   }
 
-  hasStoredAuthorization(): boolean {
-    return existsSync(this.tokenPath);
-  }
-
-  /** Connects and authenticates with the stored refresh token. */
+  /**
+   * Connects and authenticates with the stored refresh token, and falls back to the consent
+   * flow when there is no usable token. Discord then shows its own prompt, which is the only
+   * step a person has to take.
+   */
   async connect(): Promise<void> {
     if (this.authenticated) return;
 
     const stored = await this.loadTokens();
     if (!stored) {
-      throw new DiscordAuthorizationRequiredError(
-        "No Discord refresh token stored; POST /discord/authorize to grant access"
-      );
+      await this.authorize();
+      return;
     }
 
     const connection = await this.openConnection();
-    const tokens = await this.requestTokens({
-      grant_type: "refresh_token",
-      refresh_token: stored.refreshToken
-    });
+    let tokens;
+    try {
+      tokens = await this.requestTokens({
+        grant_type: "refresh_token",
+        refresh_token: stored.refreshToken
+      });
+    } catch (error) {
+      if (!(error instanceof DiscordAuthorizationRequiredError)) throw error;
+
+      this.log.warn("Stored Discord token no longer works; asking for consent again", {
+        error: error.message
+      });
+      await this.authorize();
+      return;
+    }
+
     await this.saveTokens(tokens);
     await connection.send("AUTHENTICATE", { access_token: tokens.access_token });
     this.authenticated = true;
@@ -70,7 +84,15 @@ export class DiscordVoiceClient {
    * the user is at the machine.
    */
   async authorize(): Promise<void> {
+    const sinceLastAttempt = Date.now() - this.lastAuthorizeAt;
+    if (sinceLastAttempt < authorizeCooldownMs) {
+      throw new DiscordAuthorizationRequiredError(
+        `Waiting ${Math.round((authorizeCooldownMs - sinceLastAttempt) / 1000)}s before asking for Discord consent again`
+      );
+    }
+
     const connection = await this.openConnection();
+    this.lastAuthorizeAt = Date.now();
     this.log.info("Requesting Discord authorization; accept the prompt in Discord");
     const authorized = await connection.send("AUTHORIZE", {
       client_id: this.config.clientId,
