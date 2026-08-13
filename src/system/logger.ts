@@ -21,6 +21,7 @@ const order: Record<LogLevel, number> = {
 const maxLogAgeMs = 7 * 24 * 60 * 60 * 1000;
 const maxLogFileBytes = 10 * 1024 * 1024;
 let consoleErrorHandlersAttached = false;
+let prunedForDate = "";
 
 export class Logger {
   private readonly logDir: string;
@@ -90,7 +91,19 @@ function attachConsoleErrorHandlers(): void {
 }
 
 function appendBoundedLog(logDir: string, output: string): void {
-  const logFilePath = join(logDir, `service-${formatDate(new Date())}.log`);
+  const date = formatDate(new Date());
+  // The service runs for weeks without a restart, so the constructor prune alone
+  // would never reclaim anything. Every rollover into a new daily file prunes again.
+  if (date !== prunedForDate) {
+    prunedForDate = date;
+    try {
+      pruneLogs(logDir);
+    } catch {
+      // A failed prune must not drop the log line that triggered it.
+    }
+  }
+
+  const logFilePath = join(logDir, `service-${date}.log`);
   if (existsSync(logFilePath) && statSync(logFilePath).size > maxLogFileBytes) {
     writeFileSync(
       logFilePath,
@@ -111,18 +124,13 @@ function appendBoundedLog(logDir: string, output: string): void {
   appendFileSync(logFilePath, output, "utf8");
 }
 
-function pruneLogs(logDir: string): void {
+export function pruneLogs(logDir: string): void {
   const now = Date.now();
   for (const entry of readdirSync(logDir, { withFileTypes: true })) {
-    if (!entry.isFile()) continue;
-    if (!/^service-\d{4}-\d{2}-\d{2}\.log$/i.test(entry.name) && entry.name !== "service.log")
-      continue;
+    if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".log")) continue;
 
     const path = join(logDir, entry.name);
-    const stats = statSync(path);
-    if (now - stats.mtimeMs > maxLogAgeMs || entry.name === "service.log") {
-      rmSync(path, { force: true });
-    }
+    if (now - statSync(path).mtimeMs > maxLogAgeMs) rmSync(path, { force: true });
   }
 }
 

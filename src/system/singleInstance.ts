@@ -48,7 +48,9 @@ export function acquireSingleInstanceLock(logger: Logger): SingleInstanceLock | 
       if (!isFileExistsError(error)) throw error;
       const existing = readLockFile(lockPath);
       if (existing && isProcessAlive(existing.pid)) {
-        log.warn("Another service instance is already running; exiting duplicate", {
+        // The scheduled task fires every minute and every duplicate exits here, so
+        // this is the normal path, not a fault worth a line in the daily log.
+        log.debug("Another service instance is already running; exiting duplicate", {
           pid: existing.pid
         });
         return undefined;
