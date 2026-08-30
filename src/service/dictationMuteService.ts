@@ -34,7 +34,6 @@ export class DictationMuteService {
   private readonly discord: NonNullable<DictationMuteCollaborators["discord"]>;
   private readonly statePath = join(dirname(getConfigPath()), "dictation-mute-state.json");
   private reconnectTimer?: ReturnType<typeof setTimeout>;
-  private releaseTimer?: ReturnType<typeof setTimeout>;
   private unmuteTimer?: ReturnType<typeof setTimeout>;
   private mutedByUs = false;
   private wanted = true;
@@ -140,8 +139,6 @@ export class DictationMuteService {
       return;
     }
 
-    if (this.releaseTimer) clearTimeout(this.releaseTimer);
-    this.releaseTimer = undefined;
     if (!this.mutedByUs || this.unmuteTimer) return;
 
     // Handy plays its stop chime after the recording ends, and the microphone picks it up.
@@ -165,7 +162,6 @@ export class DictationMuteService {
       if (!this.discord.isReady) return;
     }
     if (this.mutedByUs) {
-      this.armSafetyRelease();
       return;
     }
 
@@ -182,7 +178,6 @@ export class DictationMuteService {
 
     await this.discord.setMute(true);
     this.mutedByUs = true;
-    this.armSafetyRelease();
     this.log.info("Muted Discord for dictation");
   }
 
@@ -196,24 +191,11 @@ export class DictationMuteService {
     this.log.info("Unmuted Discord after dictation");
   }
 
-  /** A missed stop event must never leave the microphone muted for the rest of the call. */
-  private armSafetyRelease(): void {
-    if (this.releaseTimer) clearTimeout(this.releaseTimer);
-    this.releaseTimer = setTimeout(() => {
-      this.releaseTimer = undefined;
-      this.log.warn("Dictation ran past the mute limit; unmuting", {
-        maxMuteMs: this.config.maxMuteMs
-      });
-      this.queue("safety-release", () => this.applyUnmute());
-    }, this.config.maxMuteMs);
-  }
-
   private clearTimers(): void {
-    for (const timer of [this.reconnectTimer, this.releaseTimer, this.unmuteTimer]) {
+    for (const timer of [this.reconnectTimer, this.unmuteTimer]) {
       if (timer) clearTimeout(timer);
     }
     this.reconnectTimer = undefined;
-    this.releaseTimer = undefined;
     this.unmuteTimer = undefined;
   }
 

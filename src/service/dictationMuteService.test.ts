@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { mock } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { DictationMuteConfig } from "../config/schema.ts";
 import type { DictationEvent } from "../dictation/handyLogWatcher.ts";
@@ -14,7 +14,6 @@ function config(): DictationMuteConfig {
     handyLogPath: "unused.log",
     pollMs: 1000,
     unmuteDelayMs,
-    maxMuteMs: 10_000,
     discord: { clientId: "id", clientSecret: "secret" }
   };
 }
@@ -82,6 +81,25 @@ void test("keeps the mute when the next dictation starts inside the delay", asyn
   fire("stop");
   await sleep(unmuteDelayMs + 30);
   assert.deepEqual(calls, [true, false]);
+  await service.stop();
+});
+
+void test("keeps the mute when no stop event arrives", async () => {
+  const { service, calls, fire } = stubs();
+
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    fire("start");
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls, [true]);
+
+    mock.timers.tick(600_000);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls, [true]);
+    assert.equal(service.getStatus().muted, true);
+  } finally {
+    mock.timers.reset();
+  }
   await service.stop();
 });
 

@@ -45,7 +45,8 @@ the prompt Discord shows. The refresh token is stored in
 not repeated for five minutes.
 
 The Audio view header carries the on/off toggle, which survives a service restart.
-`dictationMute.maxMuteMs` unmutes anyway when a stop event never arrives.
+A dictation can run for any length. If a stop event is ever missed, the mute stays on until the
+service stops or you unmute Discord yourself.
 
 Discord allows one RPC voice-settings controller at a time, so this can conflict with other tools
 that set voice settings over RPC.
