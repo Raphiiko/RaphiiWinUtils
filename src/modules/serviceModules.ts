@@ -4,6 +4,7 @@ import { ClipboardAutomationService } from "../service/clipboardAutomationServic
 import { AudioModeService } from "../service/audioModeService.ts";
 import { ChannelVolumeService } from "../service/channelVolumeService.ts";
 import { ControlServer } from "../service/controlServer.ts";
+import { PanelContextServer } from "../context/panelContextServer.ts";
 import { DictationMuteService } from "../service/dictationMuteService.ts";
 import { TrayApplication } from "../service/trayApplication.ts";
 import { Updater } from "../service/updater.ts";
@@ -48,6 +49,7 @@ export function createServiceModules(
     dictationMuteService,
     logger
   );
+  const panelContextServer = new PanelContextServer(config.panelContext, logger);
   const trayApplication = new TrayApplication(config.control, logger);
   const clipboardAutomationService = new ClipboardAutomationService(config.clipboard, logger);
   const xsOverlayRecoveryService = new XsOverlayRecoveryService(
@@ -74,7 +76,8 @@ export function createServiceModules(
     serviceModule("tray", trayApplication),
     serviceModule("clipboard-automations", clipboardAutomationService),
     serviceModule("dictation-mute", dictationMuteService),
-    serviceModule("xsoverlay-recovery", xsOverlayRecoveryService)
+    serviceModule("xsoverlay-recovery", xsOverlayRecoveryService),
+    serviceModule("panel-context", panelContextServer)
   ];
 }
 

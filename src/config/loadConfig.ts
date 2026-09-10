@@ -58,6 +58,15 @@ function mergeConfig(base: AppConfig, override: Partial<AppConfig>): AppConfig {
     hardRecovery: { ...base.hardRecovery, ...override.hardRecovery },
     updater: { ...base.updater, ...override.updater },
     control: { ...base.control, ...override.control },
+    panelContext: {
+      ...base.panelContext,
+      ...override.panelContext,
+      // Maps, not scalars: a user entry for one app must not drop the defaults
+      // for the others.
+      apps: { ...base.panelContext.apps, ...override.panelContext?.apps },
+      hotkeys: { ...base.panelContext.hotkeys, ...override.panelContext?.hotkeys },
+      actions: { ...base.panelContext.actions, ...override.panelContext?.actions }
+    },
     notifications: { ...base.notifications, ...override.notifications }
   };
 }

@@ -20,6 +20,14 @@ export function getClipboardHelperPath(): string {
   return getRuntimeHelperPath("ClipboardWatcher", "ClipboardWatcher.exe");
 }
 
+export function getForegroundHelperPath(): string {
+  return getRuntimeHelperPath("ForegroundWatcher", "ForegroundWatcher.exe");
+}
+
+export function getPhotoshopBridgePath(): string {
+  return getRuntimeHelperPath("PhotoshopBridge", "PhotoshopBridge.exe");
+}
+
 export function getWallpaperHelperPath(): string {
   return getRuntimeHelperPath("WallpaperHelper", "WallpaperHelper.exe");
 }

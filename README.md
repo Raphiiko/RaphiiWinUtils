@@ -183,6 +183,112 @@ POST http://127.0.0.1:17642/api/wallpaper/apply
 The `POST /update/check` route queues one self-update check. If a check is already running it returns `409` and leaves the running check alone.
 The volume endpoint expects `{ "volumePercent": 0..100 }` and remains localhost-only.
 
+## Desk Panel Context
+
+The kipfel desk panel shows a card of controls for whichever application holds the foreground here.
+The service reports that application over a WebSocket on its own port, and accepts control presses
+back on the same socket:
+
+```text
+ws://<host>:17643/panel/ws?token=<panelContext.token>
+```
+
+This is a separate listener from the control API on purpose. The control API has no auth and stays on
+`127.0.0.1`; only this socket is reachable off-box, and only with the token.
+
+The socket sends a snapshot on connect and on every change:
+
+```json
+{ "type": "context", "app": "photoshop", "title": "kipfel.psd", "photoshop": null }
+```
+
+`app` is `null` whenever the foreground application is not in `panelContext.apps`, so the panel shows
+no card. It accepts one message shape back:
+
+```json
+{ "type": "command", "app": "photoshop", "command": "mirror" }
+```
+
+Commands are dropped, with a warning, when the named app no longer holds the foreground. A keystroke
+sent then would land in whatever took over.
+
+Configure it under `panelContext` in `%APPDATA%\RaphiiWinUtils\config.json`:
+
+- `token` gates the socket. The service refuses to listen while it is empty.
+- `apps` maps a lowercased process name without the extension to the app id the panel knows, so
+  adding an application is the whole opt-in.
+- `hotkeys` is keyed `"<appId>.<command>"` and holds a key combination to send to the focused window,
+  e.g. `"ctrl+shift+m"`.
+- `actions` is keyed the same way and holds `"<ActionSet>/<Action>"`, a saved Photoshop Action played
+  through the automation interface. It takes precedence over a hotkey.
+
+## Photoshop
+
+Brush size and angle go through the `PhotoshopBridge` helper, which drives the `Photoshop.Application`
+COM interface. Photoshop exposes no direct COM property for either, so the helper reads them with
+Action Manager inside `DoJavaScript` and writes them with a `set` against the brush class.
+
+Two things about that interface decide the design:
+
+- **`DoJavaScript` costs about 200ms per call whatever it contains.** Measured on Photoshop 27.10:
+  203ms for `"x";`, 244ms for the brush read, 480ms for the write, against 1.7ms for a direct COM
+  property. So the helper answers one command at a time and the controller coalesces: at most one
+  call in flight, and a drag's newest value replaces any waiting one. Never queue these.
+- **A partial `set` resets the fields it omits.** Writing only the angle drops the diameter to its
+  25px default. Both values are therefore always written together, and the helper refuses a set that
+  carries only one.
+
+Reads happen when Photoshop takes focus, and never on a timer: the script runs on Photoshop's own UI
+thread, so polling would hitch the canvas every few seconds while painting.
+
+The helper sets `DisplayDialogs = psDisplayNoDialogs` on connect. Without it a failing call puts a
+modal error box on Photoshop and blocks it until somebody clicks OK, so one bad Action name from the
+panel would freeze the application.
+
+It never starts Photoshop. The panel asking for a brush value must not launch a 2GB application, so
+the helper reports `unavailable` unless `Photoshop.exe` is already running.
+
+### Toggle Symmetry Off/Last
+
+This one is not solved. It is not a menu item — walking Photoshop's own `menuBarInfo` tree finds no
+symmetry entry — which is why it never appears in the shortcut editor's menu list and cannot be
+bound. It is not a scriptable property either: `paintSymmetry`, `symmetry`, `symmetryPath` and
+`paintSymmetryPath` all fail against both the document and the application descriptor, and neither
+descriptor carries a symmetry key.
+
+Photoshop's UI has no toggle either — the butterfly menu lists "Off" and "Last Used" as separate
+commands — so a recorded Action can only ever be one half of it. The toggle is therefore built here,
+from two Actions plus a state read:
+
+```json
+"actions": {
+  "photoshop.mirror.on":  "Kipfel/Symmetry Last",
+  "photoshop.mirror.off": "Kipfel/Symmetry Off"
+}
+```
+
+A command with both `.on` and `.off` keys alternates between them. Recording two Actions with those
+names in a set called `Kipfel` is the whole setup; the recorded steps come out as **Set Symmetry
+Path** and **Clear Symmetry Path**, and both replay correctly.
+
+**The state is not readable, so the service tracks it.** Symmetry appears in no descriptor — not the
+document, not the application, not the path items — and playing either Action changes nothing
+observable except the Edit menu's undo label. Checked directly: snapshotting all 62 document keys,
+all 122 application keys, and 64 path-item keys across a play shows no difference. `targetPathIndex`
+looked promising and is not it; it stays `-1` either way.
+
+So the flag starts at off, on the basis that symmetry is per-document and off when a document opens,
+and flips on every press. The consequence is worth knowing: changing symmetry from Photoshop's own
+butterfly menu puts the service out of phase, and the next panel press then does nothing visible. A
+second press fixes it, and both Actions are idempotent, so nothing worse happens.
+
+A UXP plugin calling `require("photoshop").action.batchPlay(...)` would not fix the state problem
+either, but it would cut the brush latency to single-digit milliseconds.
+
+The foreground itself comes from the `ForegroundWatcher` helperThe foreground itself comes from the `ForegroundWatcher` helper, which owns a WinEvent hook for both
+foreground and title changes, plus a slow fallback poll. It also sends the keystrokes, through
+`SendInput`, because it already runs a message loop and knows what has focus.
+
 ## Home Assistant VR Recovery
 
 When MQTT is enabled, the discovered **Shirakami** device exposes two mutually exclusive buttons:

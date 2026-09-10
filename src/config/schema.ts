@@ -13,6 +13,7 @@ export interface AppConfig {
   hardRecovery: HardRecoveryConfig;
   updater: UpdaterConfig;
   control: ControlConfig;
+  panelContext: PanelContextConfig;
   notifications: NotificationConfig;
 }
 
@@ -160,6 +161,40 @@ export interface ControlConfig {
 export interface NotificationConfig {
   enabled: boolean;
   appName: string;
+}
+
+/**
+ * The kipfel desk panel's context card: which foreground application it is
+ * shown controls for, and the hotkeys those controls press.
+ *
+ * `apps` maps a lowercased process name (no .exe) to the app id the panel knows.
+ * A process absent from the map means the panel shows no card, so adding an app
+ * here is the whole opt-in.
+ *
+ * `hotkeys` is keyed by "<appId>.<command>" and holds a key combination to send
+ * to the focused window, e.g. "ctrl+shift+m". An empty string means unbound,
+ * and presses are dropped rather than sending a stray keystroke.
+ *
+ * `actions` is keyed the same way and holds "<ActionSet>/<Action>" — a saved
+ * Photoshop Action played through the automation interface. It takes precedence
+ * over a hotkey, because it reaches commands that have no assignable shortcut
+ * at all. Paint symmetry is one of those: it is not a menu item, so it never
+ * appears in the shortcut editor's menu list.
+ */
+export interface PanelContextConfig {
+  enabled: boolean;
+  /**
+   * Its own listener, deliberately not the control API's. The control API stays
+   * on 127.0.0.1 because its dashboard and audio routes have no auth; only this
+   * socket is reachable off-box, and only with the token.
+   */
+  host: string;
+  port: number;
+  /** Shared secret the panel backend presents on the socket. Empty = refuse all. */
+  token: string;
+  apps: Record<string, string>;
+  hotkeys: Record<string, string>;
+  actions: Record<string, string>;
 }
 
 export const defaultConfig: AppConfig = {
@@ -330,6 +365,20 @@ export const defaultConfig: AppConfig = {
     enabled: true,
     host: "127.0.0.1",
     port: 17642
+  },
+  panelContext: {
+    enabled: true,
+    host: "0.0.0.0",
+    port: 17643,
+    token: "",
+    apps: {
+      photoshop: "photoshop"
+    },
+    hotkeys: {},
+    actions: {
+      "photoshop.mirrorOn": "",
+      "photoshop.mirrorOff": ""
+    }
   },
   notifications: {
     enabled: true,
