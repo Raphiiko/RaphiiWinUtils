@@ -1,0 +1,114 @@
+{
+  "manifestVersion": 5,
+  "id": "com.raphii.kipfel.bridge",
+  "name": "Kipfel Bridge",
+  "version": "1.0.0",
+  "main": "index.js",
+  "host": [
+    {
+      "app": "PS",
+      "minVersion": "24.0.0"
+    }
+  ],
+  "entrypoints": [
+    {
+      "type": "panel",
+      "id": "kipfelBridgePanel",
+      "label": {
+        "default": "Kipfel Bridge"
+      },
+      "minimumSize": {
+        "width": 200,
+        "height": 120
+      },
+      "icons": [
+        {
+          "width": 23,
+          "height": 23,
+          "path": "icons/icon23.png",
+          "scale": [
+            1
+          ],
+          "theme": [
+            "darkest",
+            "dark",
+            "medium",
+            "light",
+            "lightest",
+            "all"
+          ],
+          "species": [
+            "generic"
+          ]
+        },
+        {
+          "width": 46,
+          "height": 46,
+          "path": "icons/icon46.png",
+          "scale": [
+            2
+          ],
+          "theme": [
+            "darkest",
+            "dark",
+            "medium",
+            "light",
+            "lightest",
+            "all"
+          ],
+          "species": [
+            "generic"
+          ]
+        }
+      ]
+    }
+  ],
+  "icons": [
+    {
+      "width": 23,
+      "height": 23,
+      "path": "icons/icon23.png",
+      "scale": [
+        1
+      ],
+      "theme": [
+        "darkest",
+        "dark",
+        "medium",
+        "light",
+        "lightest",
+        "all"
+      ],
+      "species": [
+        "generic"
+      ]
+    },
+    {
+      "width": 46,
+      "height": 46,
+      "path": "icons/icon46.png",
+      "scale": [
+        2
+      ],
+      "theme": [
+        "darkest",
+        "dark",
+        "medium",
+        "light",
+        "lightest",
+        "all"
+      ],
+      "species": [
+        "generic"
+      ]
+    }
+  ],
+  "requiredPermissions": {
+    "network": {
+      "domains": [
+        "ws://127.0.0.1:17642",
+        "ws://localhost:17642"
+      ]
+    }
+  }
+}

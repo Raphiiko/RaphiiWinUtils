@@ -5,6 +5,7 @@ import { Logger } from "../system/logger.ts";
 import { ForegroundWatcher } from "./foregroundWatcher.ts";
 import { PanelContextService, type PanelContext } from "./panelContextService.ts";
 import { PhotoshopBrushController } from "./photoshopBrush.ts";
+import type { PhotoshopUxpLink } from "./photoshopUxpLink.ts";
 
 interface PanelCommand {
   type: "command";
@@ -37,11 +38,11 @@ export class PanelContextServer {
   private app?: { stop: () => unknown };
   private unsubscribe?: () => void;
 
-  constructor(config: PanelContextConfig, logger: Logger) {
+  constructor(config: PanelContextConfig, logger: Logger, uxp: PhotoshopUxpLink) {
     this.config = config;
     this.log = logger.child("panel-server");
     this.watcher = new ForegroundWatcher(logger);
-    this.brush = new PhotoshopBrushController(logger);
+    this.brush = new PhotoshopBrushController(logger, uxp);
     this.service = new PanelContextService(config, this.watcher, logger, this.brush);
   }
 

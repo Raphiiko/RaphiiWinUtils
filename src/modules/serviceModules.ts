@@ -5,6 +5,7 @@ import { AudioModeService } from "../service/audioModeService.ts";
 import { ChannelVolumeService } from "../service/channelVolumeService.ts";
 import { ControlServer } from "../service/controlServer.ts";
 import { PanelContextServer } from "../context/panelContextServer.ts";
+import { PhotoshopUxpLink } from "../context/photoshopUxpLink.ts";
 import { DictationMuteService } from "../service/dictationMuteService.ts";
 import { TrayApplication } from "../service/trayApplication.ts";
 import { Updater } from "../service/updater.ts";
@@ -41,15 +42,19 @@ export function createServiceModules(
   );
   audioModeService.setPublisher(mqttAudioSync);
   const dictationMuteService = new DictationMuteService(config.dictationMute, logger);
+  // Shared: the control server hosts the plugin's socket, the panel context
+  // server reads and writes the brush through it.
+  const photoshopUxp = new PhotoshopUxpLink(logger);
   const controlServer = new ControlServer(
     config.control,
     updater,
     audioModeService,
     channelVolumeService,
     dictationMuteService,
+    photoshopUxp,
     logger
   );
-  const panelContextServer = new PanelContextServer(config.panelContext, logger);
+  const panelContextServer = new PanelContextServer(config.panelContext, logger, photoshopUxp);
   const trayApplication = new TrayApplication(config.control, logger);
   const clipboardAutomationService = new ClipboardAutomationService(config.clipboard, logger);
   const xsOverlayRecoveryService = new XsOverlayRecoveryService(

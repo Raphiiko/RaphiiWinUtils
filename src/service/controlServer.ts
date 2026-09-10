@@ -16,6 +16,7 @@ import {
 } from "./channelVolumeService.ts";
 import type { DictationMuteService } from "./dictationMuteService.ts";
 import type { Updater } from "./updater.ts";
+import type { PhotoshopUxpLink } from "../context/photoshopUxpLink.ts";
 
 export class ControlServer {
   private static readonly dashboardHashes = new Set(["#home", "#audio", "#wallpapers"]);
@@ -25,6 +26,7 @@ export class ControlServer {
   private readonly audioModes: AudioModeService;
   private readonly channelVolumes: ChannelVolumeService;
   private readonly dictationMute: DictationMuteService;
+  private readonly photoshop: PhotoshopUxpLink;
   private readonly logger: Logger;
   private app?: { stop: () => unknown };
 
@@ -34,9 +36,11 @@ export class ControlServer {
     audioModes: AudioModeService,
     channelVolumes: ChannelVolumeService,
     dictationMute: DictationMuteService,
+    photoshop: PhotoshopUxpLink,
     logger: Logger
   ) {
     this.config = config;
+    this.photoshop = photoshop;
     this.updater = updater;
     this.audioModes = audioModes;
     this.channelVolumes = channelVolumes;
@@ -60,6 +64,16 @@ export class ControlServer {
         return new Response(await readFile(path, "utf8"), {
           headers: { "content-type": "text/html; charset=utf-8" }
         });
+      })
+      // The Kipfel Bridge plugin, from inside Photoshop. Localhost-only like
+      // the rest of this API, so it carries no token: a brush write is not
+      // worth a credential when nothing off-box can reach the listener.
+      .ws("/photoshop/ws", {
+        parse: (_ws, message): unknown =>
+          typeof message === "string" ? (JSON.parse(message) as unknown) : message,
+        open: (ws) => this.photoshop.attach(ws.id, ws),
+        message: (_ws, message) => this.photoshop.handle(message),
+        close: (ws) => this.photoshop.detach(ws.id)
       })
       .get("/health", () => ({
         ok: true,

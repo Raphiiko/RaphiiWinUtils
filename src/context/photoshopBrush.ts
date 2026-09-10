@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { getPhotoshopBridgePath } from "../system/paths.ts";
 import { Logger } from "../system/logger.ts";
 import type { BrushController } from "./panelContextService.ts";
+import type { PhotoshopUxpLink } from "./photoshopUxpLink.ts";
 
 const RESTART_DELAY_MS = 2000;
 // A write lands in ~500ms. Well past that, assume the reply is never coming
@@ -11,7 +12,14 @@ const RESTART_DELAY_MS = 2000;
 const REPLY_TIMEOUT_MS = 15000;
 
 /**
- * Photoshop's brush size and angle, over the PhotoshopBridge helper.
+ * Photoshop's brush size and angle.
+ *
+ * Prefers the Kipfel Bridge UXP plugin when it is loaded, because a write there
+ * costs ~5ms against ~500ms over COM — the difference between a jogger that
+ * streams and one that cannot. COM is the fallback for a Photoshop running
+ * without the plugin, and still carries the recorded Actions either way.
+ *
+ * What follows describes the COM fallback.
  *
  * Photoshop answers these only through ExtendScript, and every DoJavaScript
  * call costs ~200ms of fixed overhead whatever it contains (measured: 203ms for
@@ -44,8 +52,15 @@ export class PhotoshopBrushController implements BrushController {
   private replyTimer?: ReturnType<typeof setTimeout>;
   private readonly listeners = new Set<() => void>();
 
-  constructor(logger: Logger) {
+  private readonly uxp: PhotoshopUxpLink;
+
+  constructor(logger: Logger, uxp: PhotoshopUxpLink) {
     this.log = logger.child("photoshop");
+    this.uxp = uxp;
+    // The plugin owns the values whenever it is connected.
+    this.uxp.onChange((brush) => {
+      if (this.uxp.connected) this.setBrush(brush);
+    });
   }
 
   start(): void {
@@ -63,20 +78,45 @@ export class PhotoshopBrushController implements BrushController {
   }
 
   read(): { brushSize: number; brushAngle: number } | null {
-    return this.brush;
+    return this.uxp.connected ? this.uxp.read() : this.brush;
   }
 
   refresh(): void {
+    if (this.uxp.connected) {
+      this.uxp.requestRead();
+      return;
+    }
     this.wantRead = true;
     this.pump();
   }
 
   setSize(px: number): void {
-    this.queue({ diameter: px });
+    this.write({ diameter: px });
   }
 
   setAngle(degrees: number): void {
-    this.queue({ angle: degrees });
+    this.write({ angle: degrees });
+  }
+
+  /**
+   * Both fields always go together: Photoshop resets a brush field an update
+   * omits, dropping the diameter to its 25px default. The missing half comes
+   * from the last known value.
+   */
+  private write(patch: { diameter?: number; angle?: number }): void {
+    if (!this.uxp.connected) {
+      this.queue(patch);
+      return;
+    }
+    const current = this.uxp.read();
+    const diameter = patch.diameter ?? current?.brushSize;
+    const angle = patch.angle ?? current?.brushAngle;
+    if (diameter === undefined || angle === undefined) {
+      this.log.warn("Brush write dropped: no value read yet");
+      this.uxp.requestRead();
+      return;
+    }
+    this.uxp.set(diameter, angle);
   }
 
   subscribe(listener: () => void): () => void {
