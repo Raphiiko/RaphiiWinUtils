@@ -12,3 +12,4 @@ appsettings.local.json
 opencode.json
 .codex/
 .worktrees/
+.uxprc
