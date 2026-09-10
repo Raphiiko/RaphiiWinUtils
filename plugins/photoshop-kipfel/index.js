@@ -13,6 +13,9 @@
 const { action, core } = require("photoshop");
 const { entrypoints } = require("uxp");
 
+// UXP gates outbound sockets on the manifest's network permission, and it
+// rejects an explicit ws:// origin here with "Manifest entry not found", so the
+// manifest asks for "all". Nothing is at risk: this only ever dials localhost.
 const SERVICE_URL = "ws://127.0.0.1:17642/photoshop/ws";
 const RECONNECT_MIN_MS = 1000;
 const RECONNECT_MAX_MS = 15000;
