@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildLogonTaskRegistrationScript,
   buildPushUpdateWatcherScript,
+  buildStartMenuShortcutScript,
   buildVrCleanupTaskRegistrationScript
 } from "./installer.ts";
 
@@ -28,6 +29,18 @@ void test("registers a fixed-purpose elevated VR cleanup task", () => {
   assert.match(script, /taskkill\.exe/);
   assert.match(script, /RunLevel Highest/);
   assert.doesNotMatch(script, /steam\.exe/i);
+});
+
+void test("registers the Start menu shortcut for the current install directory", () => {
+  const script = buildStartMenuShortcutScript(
+    "C:\\Tools\\RaphiiWinUtils",
+    "RaphiiWinUtils",
+    "C:\\Tools\\RaphiiWinUtils\\RaphiiWinUtils.launch.vbs"
+  );
+
+  assert.match(script, /RaphiiWinUtils\.lnk/);
+  assert.match(script, /C:\\Tools\\RaphiiWinUtils\\RaphiiWinUtils\.launch\.vbs/);
+  assert.match(script, /C:\\Tools\\RaphiiWinUtils\\helpers\\TrayApplication\\TrayApplication\.exe/);
 });
 
 void test("waits for git push to finish before requesting one update check", () => {

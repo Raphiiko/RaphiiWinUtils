@@ -2,7 +2,14 @@ import { loadConfig } from "./config/loadConfig.ts";
 import { Logger } from "./system/logger.ts";
 import { Notifier } from "./system/notify.ts";
 import { notifyCompletedUpdateIfNeeded } from "./service/updater.ts";
-import { installLocal } from "./service/installer.ts";
+import {
+  installLocal,
+  registerStartMenuShortcut,
+  writeLauncherScript
+} from "./service/installer.ts";
+import { recordManualExit, shouldStayExited } from "./service/manualExit.ts";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { acquireSingleInstanceLock } from "./system/singleInstance.ts";
 import { createServiceModules } from "./modules/serviceModules.ts";
 import { startModules, stopModules } from "./modules/appModule.ts";
@@ -35,15 +42,23 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (shouldStayExited(process.argv.includes("--manual"))) return;
+
   const instanceLock = acquireSingleInstanceLock(logger);
   if (!instanceLock) return;
 
   logger.info("Service starting");
   notifyCompletedUpdateIfNeeded(config.updater, notifier, logger);
 
-  const modules = createServiceModules(config, notifier, logger);
-  await startModules(modules, logger);
+  if (existsSync(join(process.cwd(), ".deployed-revision"))) {
+    const launcherPath = writeLauncherScript(process.cwd());
+    registerStartMenuShortcut(process.cwd(), config.notifications.appName, launcherPath);
+  }
 
+  const modules = createServiceModules(config, notifier, logger, () => {
+    recordManualExit();
+    void stop();
+  });
   let stopping = false;
   const stop = async () => {
     if (stopping) return;
@@ -57,6 +72,7 @@ async function main(): Promise<void> {
   process.on("exit", () => instanceLock.release());
   process.on("SIGINT", () => void stop());
   process.on("SIGTERM", () => void stop());
+  await startModules(modules, logger);
 }
 
 main().catch((error) => {

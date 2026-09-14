@@ -32,7 +32,11 @@ internal sealed class TrayContext : ApplicationContext
             Visible = true,
             ContextMenuStrip = new ContextMenuStrip()
         };
-        icon.ContextMenuStrip.Items.Add("Exit", null, (_, _) => ExitThread());
+        icon.ContextMenuStrip.Items.Add("Exit", null, (_, _) =>
+        {
+            Environment.ExitCode = 42;
+            ExitThread();
+        });
         icon.MouseDown += (_, eventArgs) =>
         {
             if (eventArgs.Button == MouseButtons.Left) popup.SuppressNextDeactivate();
@@ -164,16 +168,13 @@ internal sealed class DashboardPopup : Form
         HideWithAnimation();
     }
 
-    public async void Toggle()
+    public void Toggle()
     {
         if (Visible)
         {
             HideWithAnimation();
             return;
         }
-
-        await browserInitialization;
-        await ResetToHomeAsync();
 
         var area = Screen.FromPoint(Cursor.Position).WorkingArea;
         Size = new Size(
@@ -182,6 +183,7 @@ internal sealed class DashboardPopup : Form
         );
         Location = new Point(area.Right - Width - PopupMargin, area.Bottom - Height - PopupMargin);
         ShowWithAnimation();
+        _ = ResetToHomeWhenReadyAsync();
     }
 
     [DllImport("dwmapi.dll")]
@@ -210,6 +212,11 @@ internal sealed class DashboardPopup : Form
     private async Task InitializeBrowserAsync()
     {
         await browser.EnsureCoreWebView2Async();
+        browser.CoreWebView2.ProcessFailed += (_, eventArgs) =>
+        {
+            Console.Error.WriteLine($"WebView process failed: {eventArgs.ProcessFailedKind}");
+            Environment.Exit(1);
+        };
         browser.Source = new Uri(url);
     }
 
@@ -218,6 +225,21 @@ internal sealed class DashboardPopup : Form
         return browser.CoreWebView2.ExecuteScriptAsync(
             "location.hash = '#home'; window.scrollTo(0, 0);"
         );
+    }
+
+    private async Task ResetToHomeWhenReadyAsync()
+    {
+        try
+        {
+            await browserInitialization.WaitAsync(TimeSpan.FromSeconds(10));
+            if (IsDisposed) return;
+            await ResetToHomeAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine($"Dashboard reset failed: {error}");
+            if (!IsDisposed) Environment.Exit(1);
+        }
     }
 
     private void StartAnimation(double targetOpacity, bool hideWhenComplete)

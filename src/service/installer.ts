@@ -123,7 +123,38 @@ function registerWindowsIntegration(installDir: string, appName: string): void {
   }
 
   removeStartupShortcut(appName);
+  registerStartMenuShortcut(installDir, appName, launcherPath);
   registerLogonTask(installDir, appName, launcherPath);
+}
+
+export function registerStartMenuShortcut(
+  installDir: string,
+  appName: string,
+  launcherPath: string
+): void {
+  const result = spawnSync(
+    "powershell.exe",
+    ["-NoProfile", "-Command", buildStartMenuShortcutScript(installDir, appName, launcherPath)],
+    { windowsHide: true, encoding: "utf8" }
+  );
+  if (result.status !== 0)
+    throw new Error(`Failed to register Start menu shortcut: ${result.stderr}`);
+}
+
+export function buildStartMenuShortcutScript(
+  installDir: string,
+  appName: string,
+  launcherPath: string
+): string {
+  return [
+    "$shell = New-Object -ComObject WScript.Shell",
+    `$shortcut = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Programs')) '${ps(appName)}.lnk'))`,
+    "$shortcut.TargetPath = (Join-Path $env:WINDIR 'System32\\wscript.exe')",
+    `$shortcut.Arguments = '//B //Nologo "${ps(launcherPath)}" manual'`,
+    `$shortcut.WorkingDirectory = '${ps(installDir)}'`,
+    `$shortcut.IconLocation = '${ps(join(installDir, "helpers", "TrayApplication", "TrayApplication.exe"))},0'`,
+    "$shortcut.Save()"
+  ].join("; ");
 }
 
 export function writeLauncherScript(installDir: string): string {
@@ -133,7 +164,9 @@ export function writeLauncherScript(installDir: string): string {
   const script = [
     'Set shell = CreateObject("WScript.Shell")',
     `shell.CurrentDirectory = "${vbs(installDir)}"`,
-    `exitCode = shell.Run(${command}, 0, True)`,
+    `command = ${command}`,
+    'If WScript.Arguments.Count > 0 Then command = command & " --manual"',
+    'exitCode = shell.Run(command, 0, True)',
     "WScript.Quit exitCode"
   ].join("\r\n");
   writeFileSync(launcherPath, `${script}\r\n`, "utf8");

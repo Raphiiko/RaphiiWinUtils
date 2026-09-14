@@ -18,7 +18,8 @@ import type { AppModule } from "./appModule.ts";
 export function createServiceModules(
   config: AppConfig,
   notifier: Notifier,
-  logger: Logger
+  logger: Logger,
+  onQuit: () => void
 ): AppModule[] {
   const updater = new Updater(config.updater, config.notifications.appName, notifier, logger);
   const channelVolumeService = new ChannelVolumeService(config, logger);
@@ -55,7 +56,7 @@ export function createServiceModules(
     logger
   );
   const panelContextServer = new PanelContextServer(config.panelContext, logger, photoshopUxp);
-  const trayApplication = new TrayApplication(config.control, logger);
+  const trayApplication = new TrayApplication(config.control, logger, onQuit);
   const clipboardAutomationService = new ClipboardAutomationService(config.clipboard, logger);
   const xsOverlayRecoveryService = new XsOverlayRecoveryService(
     config.xsOverlayRecovery,
