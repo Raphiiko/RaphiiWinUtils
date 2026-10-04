@@ -278,7 +278,7 @@ export const defaultConfig: AppConfig = {
       },
       tws: {
         name: "TWS",
-        outputDeviceName: "Nothing Ear (Nothing Ear)",
+        outputDeviceName: "Headphones (Nothing Ear (a))",
         micInputSlot: "WIN1.IN",
         micRoutes: [
           { inputChannel: 1, outputChannel: 1 },
