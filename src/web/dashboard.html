@@ -502,36 +502,43 @@
       .audio-grid {
         flex: 1;
         display: grid;
-        grid-template-columns: 1fr 1.22fr;
+        grid-template-columns: minmax(0, 1fr) 23rem;
+        gap: 1.125rem;
+        min-height: 0;
+      }
+      .audio-side {
+        display: flex;
+        flex-direction: column;
         gap: 1.125rem;
         min-height: 0;
       }
       .modes {
-        flex: 1;
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 0.75rem;
-        min-height: 0;
-      }
-      .mode {
-        position: relative;
         display: flex;
         flex-direction: column;
-        justify-content: flex-end;
         gap: 0.25rem;
-        padding: 0.875rem 1.125rem 1rem;
-        background: var(--glass);
-        border: 1px solid var(--edge);
-        border-radius: 1.125rem;
-        color: var(--text);
+      }
+      .mode {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        width: 100%;
+        min-width: 0;
+        padding: 0.5625rem 0.75rem;
+        border: 1px solid transparent;
+        border-radius: 0.875rem;
+        background: transparent;
+        color: var(--dim);
         font: inherit;
         text-align: left;
         cursor: pointer;
-        transition: all 0.2s;
+        transition:
+          background 0.15s ease,
+          border-color 0.15s ease,
+          color 0.15s ease;
       }
       .mode:hover:not(:disabled) {
         background: var(--glass-hi);
-        border-color: var(--edge-hi);
+        color: var(--text);
       }
       .mode:disabled {
         cursor: wait;
@@ -540,96 +547,117 @@
       .mode svg {
         width: 1.25rem;
         height: 1.25rem;
-        color: var(--dim);
-        margin-bottom: auto;
+        flex: none;
+      }
+      .mode .text {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
       }
       .mode .name {
-        font-size: 1rem;
+        color: var(--text);
+        font-size: 0.9375rem;
         font-weight: 600;
       }
       .mode .dev {
         font-size: 0.71875rem;
-        color: var(--dim);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
       .mode[aria-pressed="true"] {
-        border-color: #8b9cf766;
-        background: linear-gradient(165deg, #8b9cf71c, #8b9cf70a);
-        box-shadow:
-          0 0 32px #8b9cf72b,
-          inset 0 1px 0 #ffffff1a;
+        color: var(--indigo);
+        border-color: #8b9cf740;
+        background: linear-gradient(165deg, #8b9cf71c, #8b9cf708);
       }
       .mode[aria-pressed="true"] svg {
-        color: var(--indigo);
         filter: drop-shadow(0 0 8px #8b9cf7aa);
       }
       .mode[aria-pressed="true"]::after {
-        content: "ACTIVE";
-        position: absolute;
-        top: 0.875rem;
-        right: 0.875rem;
-        font-size: 0.5625rem;
-        letter-spacing: 0.18em;
-        color: var(--indigo);
-      }
-      .mic-label {
-        margin: 1.125rem 0 0.75rem;
-      }
-      .mics {
-        display: grid;
-        grid-template-columns: repeat(5, 1fr);
-        gap: 0.5rem;
-      }
-      .mode.mic {
-        display: flex;
-        justify-content: center;
-        padding: 0.625rem 0.5rem;
-        text-align: center;
-      }
-      .mode.mic .name {
-        font-size: 0.875rem;
-      }
-      .mode.mic::after {
-        content: none;
+        content: "";
+        flex: none;
+        margin-left: auto;
+        width: 0.4375rem;
+        height: 0.4375rem;
+        border-radius: 999px;
+        background: var(--mint);
+        box-shadow: 0 0 10px var(--mint);
       }
       .mode.pending::after {
         content: "SWITCHING…";
-        position: absolute;
-        top: 0.875rem;
-        right: 0.875rem;
+        flex: none;
+        margin-left: auto;
+        width: auto;
+        height: auto;
+        background: none;
+        box-shadow: none;
         font-size: 0.5625rem;
         letter-spacing: 0.18em;
         color: var(--dim);
       }
+      .mics {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(3.25rem, 1fr));
+        gap: 0.25rem;
+        padding: 0.25rem;
+        border-radius: 0.875rem;
+        background: #00000040;
+        border: 1px solid var(--edge);
+      }
+      .mic {
+        height: 2.25rem;
+        padding: 0;
+        border: 1px solid transparent;
+        border-radius: 0.625rem;
+        background: transparent;
+        color: var(--dim);
+        font: inherit;
+        font-size: 0.8125rem;
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        cursor: pointer;
+        transition:
+          background 0.15s ease,
+          color 0.15s ease;
+      }
+      .mic:hover:not(:disabled) {
+        color: var(--text);
+      }
+      .mic:disabled {
+        cursor: wait;
+        opacity: 0.55;
+      }
+      .mic[aria-pressed="true"] {
+        color: var(--text);
+        background: #8b9cf72e;
+        border-color: #8b9cf766;
+      }
 
       .vols {
         flex: 1;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-evenly;
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: minmax(0, 1fr);
+        gap: 0.75rem;
         min-height: 0;
       }
       .vol {
-        display: grid;
-        grid-template-columns: 5.25rem 1fr 3.75rem;
+        display: flex;
+        flex-direction: column;
         align-items: center;
-        gap: 1rem;
-      }
-      .vol .name {
-        font-weight: 550;
-        font-size: 0.9375rem;
-      }
-      .vol.muted .name::after {
-        content: " muted";
-        font-size: 0.6875rem;
-        color: var(--red);
+        gap: 0.75rem;
+        min-height: 0;
+        padding: 0.875rem 0 0.75rem;
+        border-radius: 1rem;
+        background: #ffffff04;
+        border: 1px solid #ffffff0a;
       }
       .vol .val {
-        text-align: right;
-        font-size: 1.375rem;
+        font-size: 1.625rem;
         font-weight: 250;
+        line-height: 1;
         font-variant-numeric: tabular-nums;
       }
       .vol .val small {
@@ -637,19 +665,28 @@
         color: var(--dim);
         margin-left: 0.125rem;
       }
-      .ctl {
-        display: grid;
-        grid-template-columns: 2.875rem 1fr 2.875rem;
-        gap: 0.625rem;
-        align-items: center;
+      .vol .name {
+        font-weight: 600;
+        font-size: 0.8125rem;
+        white-space: nowrap;
+      }
+      .vol.muted .name::after {
+        content: " · muted";
+        font-weight: 400;
+        color: var(--red);
+      }
+      .vol-steps {
+        display: flex;
+        gap: 0.375rem;
       }
       .stepbtn {
-        height: 2.875rem;
-        border-radius: 0.875rem;
+        width: 2.25rem;
+        height: 2rem;
+        border-radius: 0.625rem;
         border: 1px solid var(--edge);
         background: var(--glass);
         color: var(--dim);
-        font-size: 1.25rem;
+        font-size: 1.0625rem;
         cursor: pointer;
         transition: all 0.15s;
       }
@@ -660,7 +697,9 @@
       }
       .track {
         position: relative;
-        height: 2.875rem;
+        flex: 1;
+        min-height: 6rem;
+        width: 2.875rem;
         border-radius: 0.875rem;
         overflow: hidden;
         cursor: pointer;
@@ -670,46 +709,50 @@
         touch-action: none;
         user-select: none;
       }
+      .track:focus-visible {
+        outline: 2px solid var(--indigo);
+        outline-offset: 2px;
+      }
       .track .fill {
         position: absolute;
-        inset: 3px;
-        right: auto;
+        left: 3px;
+        right: 3px;
+        bottom: 3px;
         border-radius: 0.625rem;
-        background: linear-gradient(90deg, var(--indigo-deep), var(--indigo));
+        background: linear-gradient(0deg, var(--indigo-deep), var(--indigo));
         box-shadow: 0 0 18px #8b9cf74d;
-        min-width: 0.25rem;
+        min-height: 0.25rem;
+      }
+      .vol.muted .track .fill {
+        background: #7d8aa855;
+        box-shadow: none;
       }
       .track .steps {
         position: absolute;
         inset: 3px;
         display: flex;
+        flex-direction: column;
         pointer-events: none;
       }
       .track .steps i {
         flex: 1;
-        border-right: 1px solid #ffffff0a;
+        border-bottom: 1px solid #ffffff0a;
       }
       .track .steps i:last-child {
-        border-right: 0;
+        border-bottom: 0;
       }
-      .track .thumb {
+      .track .grip {
         position: absolute;
-        top: 50%;
-        transform: translate(-50%, -50%);
-        width: 1.875rem;
-        height: 2.125rem;
-        border-radius: 0.625rem;
+        left: 50%;
+        transform: translate(-50%, 50%);
+        width: 2.25rem;
+        height: 0.375rem;
+        border-radius: 999px;
         background: #f4f6ff;
-        box-shadow: 0 2px 10px #0008;
-        display: grid;
-        place-items: center;
+        box-shadow:
+          0 0 10px #8b9cf7,
+          0 2px 6px #0008;
         pointer-events: none;
-      }
-      .track .thumb::before {
-        content: "";
-        width: 0.875rem;
-        height: 0.875rem;
-        background: radial-gradient(circle, #9aa4c8 1.2px, transparent 1.6px) 0 0 / 4.5px 4.5px;
       }
 
       /* ============ Wallpapers ============ */
@@ -1102,26 +1145,12 @@
           margin-left: 0;
           flex-wrap: wrap;
         }
-        .audio-grid,
         .wp-grid {
           grid-template-columns: 1fr;
         }
-        .mode {
-          display: grid;
-          grid-template-columns: 1.25rem minmax(0, 1fr);
-          grid-template-rows: auto auto;
-          align-content: center;
-          column-gap: 0.75rem;
-          row-gap: 0.125rem;
-          padding: 0.625rem 1rem;
-        }
-        .modes {
-          gap: 0.5rem;
-        }
-        .mode svg {
-          grid-row: 1 / 3;
-          align-self: center;
-          margin: 0;
+        #view-audio .view-head .chips {
+          width: auto;
+          margin-left: auto;
         }
         .wp-grid {
           flex: none;
@@ -1202,7 +1231,27 @@
           flex: 1 1 12rem;
         }
       }
+      @media (max-width: 48rem) {
+        .audio-grid {
+          flex: none;
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .vols {
+          flex: none;
+          height: 20rem;
+        }
+      }
       @media (max-width: 40rem) {
+        #view-audio .view-head .chips {
+          width: 100%;
+          margin-left: 0;
+        }
+        .vols {
+          gap: 0.375rem;
+        }
+        .vol-steps {
+          flex-direction: column;
+        }
         .rail {
           width: 3.75rem;
           margin: 0.75rem 0 0.75rem 0.75rem;
@@ -1376,15 +1425,19 @@
         </div>
         <div class="audio-grid">
           <section class="card">
-            <div class="card-label">Output routing</div>
-            <div class="modes" id="modeGrid"></div>
-            <div class="card-label mic-label">Microphone</div>
-            <div class="mics" id="micGrid"></div>
-          </section>
-          <section class="card">
             <div class="card-label">Channel levels</div>
             <div class="vols" id="volList"></div>
           </section>
+          <div class="audio-side">
+            <section class="card">
+              <div class="card-label">Output</div>
+              <div class="modes" id="modeGrid"></div>
+            </section>
+            <section class="card">
+              <div class="card-label">Microphone</div>
+              <div class="mics" id="micGrid"></div>
+            </section>
+          </div>
         </div>
       </section>
 
@@ -1779,13 +1832,17 @@
           button.disabled = switching;
           button.setAttribute("aria-pressed", String(mode.id === state.activeMode));
           button.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${iconFor(mode)}</svg>`;
+          button.title = mode.outputDeviceName;
+          const text = document.createElement("span");
+          text.className = "text";
           const name = document.createElement("span");
           name.className = "name";
           name.textContent = mode.name;
           const device = document.createElement("span");
           device.className = "dev";
           device.textContent = mode.outputDeviceName;
-          button.append(name, device);
+          text.append(name, device);
+          button.append(text);
           button.onclick = async () => {
             switching = true;
             renderModes();
@@ -1812,13 +1869,10 @@
         for (const mic of state.mics) {
           const button = document.createElement("button");
           button.type = "button";
-          button.className = "mode mic";
+          button.className = "mic";
           button.disabled = switching;
           button.setAttribute("aria-pressed", String(mic.id === state.activeMic));
-          const name = document.createElement("span");
-          name.className = "name";
-          name.textContent = mic.name;
-          button.append(name);
+          button.textContent = mic.name;
           button.onclick = async () => {
             switching = true;
             renderModes();
@@ -1856,8 +1910,6 @@
           let volume = Math.round(channel.volumePercent);
           setValueText(volume);
 
-          const ctl = document.createElement("div");
-          ctl.className = "ctl";
           const track = document.createElement("div");
           track.className = "track";
           track.tabIndex = 0;
@@ -1865,18 +1917,19 @@
           track.setAttribute("aria-label", `${channel.name} volume`);
           track.setAttribute("aria-valuemin", "0");
           track.setAttribute("aria-valuemax", "100");
+          track.setAttribute("aria-orientation", "vertical");
           const fill = document.createElement("div");
           fill.className = "fill";
           const steps = document.createElement("div");
           steps.className = "steps";
           steps.innerHTML = "<i></i>".repeat(10);
-          const thumb = document.createElement("div");
-          thumb.className = "thumb";
-          track.append(fill, steps, thumb);
+          const grip = document.createElement("div");
+          grip.className = "grip";
+          track.append(fill, steps, grip);
 
           const paint = () => {
-            fill.style.width = `${volume}%`;
-            thumb.style.left = `clamp(1.1rem, ${volume}%, calc(100% - 1.1rem))`;
+            fill.style.height = `calc(${volume}% - 6px)`;
+            grip.style.bottom = `clamp(0.5rem, ${volume}%, calc(100% - 0.5rem))`;
             track.setAttribute("aria-valuenow", String(volume));
             setValueText(volume);
           };
@@ -1902,7 +1955,7 @@
             track.setPointerCapture(event.pointerId);
             const fromPointer = (pointerEvent) => {
               const rect = track.getBoundingClientRect();
-              setVolume(((pointerEvent.clientX - rect.left) / rect.width) * 100);
+              setVolume(((rect.bottom - pointerEvent.clientY) / rect.height) * 100);
             };
             fromPointer(event);
             const move = (moveEvent) => fromPointer(moveEvent);
@@ -1917,8 +1970,8 @@
             track.addEventListener("pointercancel", end);
           });
           track.addEventListener("keydown", (event) => {
-            if (event.key === "ArrowLeft") setVolume(volume - 5);
-            else if (event.key === "ArrowRight") setVolume(volume + 5);
+            if (event.key === "ArrowDown" || event.key === "ArrowLeft") setVolume(volume - 5);
+            else if (event.key === "ArrowUp" || event.key === "ArrowRight") setVolume(volume + 5);
             else return;
             event.preventDefault();
           });
@@ -1937,8 +1990,10 @@
             return button;
           };
 
-          ctl.append(makeStep("−", -5), track, makeStep("+", 5));
-          row.append(name, ctl, value);
+          const stepButtons = document.createElement("div");
+          stepButtons.className = "vol-steps";
+          stepButtons.append(makeStep("−", -5), makeStep("+", 5));
+          row.append(value, track, stepButtons, name);
           list.append(row);
         }
       }
