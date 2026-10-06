@@ -349,9 +349,13 @@ class FakeMatrixClient {
       ]);
     }
 
-    const point = command.match(/^(Point\([^)]+\))\.dBGain/)?.[1];
-    if (point) {
-      return Promise.resolve([command.replace("?", this.routedPoints.has(point) ? "0.0" : "-inf")]);
+    const points = [...command.matchAll(/(Point\([^)]+\))\.dBGain = \?;/g)].map(
+      (match) => match[1]
+    );
+    if (points.length > 0) {
+      const gain = (point: string | undefined) =>
+        point && this.routedPoints.has(point) ? "0.0" : "-inf";
+      return Promise.resolve([points.map((point) => `${point}.dBGain = ${gain(point)};`).join("")]);
     }
 
     return Promise.resolve([]);

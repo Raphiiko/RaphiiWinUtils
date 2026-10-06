@@ -54,8 +54,10 @@ export class VbanTextClient {
         complete();
       };
 
+      // Matrix answers every query in one packet, even a batch of several.
       const onMessage = (message: Buffer) => {
         responses.push(message.subarray(VBAN_HEADER_BYTES).toString("utf8"));
+        finish(resolve);
       };
 
       const onError = (error: Error) => {

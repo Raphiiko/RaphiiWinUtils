@@ -30,6 +30,7 @@ interface AudioModeServiceDependencies {
 }
 
 const preSwitchVolumePolicyWaitMs = 1_000;
+const outputPollMs = 100;
 const pendingModeTimeoutMs = 60_000;
 const pendingModeRetryGapMs = 5_000;
 
@@ -332,13 +333,9 @@ export class AudioModeService {
 
     for (let attempt = 1; attempt <= attempts; attempt++) {
       await this.sendMatrixCommand(outputCommand);
-      await this.delay(this.config.audioModes.engineSettleMs);
 
-      actual = await this.queryOutputDevice();
-      if (
-        actual.driver === outputDriver(mode) &&
-        isSameAudioDevice(actual.name, mode.outputDeviceName)
-      ) {
+      actual = await this.waitForOutputDevice(mode);
+      if (isOutputSelected(actual, mode)) {
         return { attempts: attempt, matrixRestarted };
       }
 
@@ -366,6 +363,20 @@ export class AudioModeService {
     );
   }
 
+  /** Polls until Matrix reports the mode's output, for at most engineSettleMs. */
+  private async waitForOutputDevice(
+    mode: AudioModeConfig
+  ): Promise<{ driver?: string; name?: string }> {
+    const polls = Math.max(1, Math.ceil(this.config.audioModes.engineSettleMs / outputPollMs));
+    let actual: { driver?: string; name?: string } = {};
+    for (let poll = 0; poll < polls; poll++) {
+      await this.delay(outputPollMs);
+      actual = await this.queryOutputDevice();
+      if (isOutputSelected(actual, mode)) break;
+    }
+    return actual;
+  }
+
   private async queryOutputDevice(): Promise<{ driver?: string; name?: string }> {
     const command = `Slot(${this.config.audioModes.mainOutputSlot}).Device = ?;`;
     const client = this.createMatrixClient();
@@ -387,10 +398,9 @@ export class AudioModeService {
     let lastFailure: MatrixRouteVerification | undefined;
 
     for (let attempt = 1; attempt <= attempts; attempt++) {
-      await this.sendMatrixCommand(resetCommand);
-      await this.delay(100);
-      await this.sendMatrixCommand(routeCommand);
-      await this.delay(this.config.audioModes.routeRetryDelayMs);
+      if (attempt > 1) await this.delay(this.config.audioModes.routeRetryDelayMs);
+      // Matrix runs the commands of one packet in order, so the reset lands before the route.
+      await this.sendMatrixCommand(`${resetCommand}${routeCommand}`);
 
       const verification = await this.verifyMicRouting(mic);
       if (verification.ok) {
@@ -416,14 +426,12 @@ export class AudioModeService {
   private async verifyMicRouting(mic: AudioMicConfig): Promise<MatrixRouteVerification> {
     const expected = new Set(mic.routes.map((route) => routeKey(mic.inputSlot, route)));
     const failures: string[] = [];
+    const candidates = this.getKnownMicRouteCandidates();
+    const gains = await this.queryPointGains(candidates);
 
-    for (const candidate of this.getKnownMicRouteCandidates()) {
+    for (const candidate of candidates) {
       const key = routeKey(candidate.inputSlot, candidate);
-      const gain = await this.queryPointGain(
-        candidate.inputSlot,
-        candidate.inputChannel,
-        candidate.outputChannel
-      );
+      const gain = gains.get(this.pointName(candidate));
       const shouldExist = expected.has(key);
 
       if (gain === undefined) {
@@ -466,16 +474,18 @@ export class AudioModeService {
     return candidates;
   }
 
-  private async queryPointGain(
-    inputSlot: string,
-    inputChannel: number,
-    outputChannel: number
-  ): Promise<number | undefined> {
-    const command = `Point(${inputSlot}[${inputChannel}],${this.config.audioModes.micMixOutputSlot}.OUT[${outputChannel}]).dBGain = ?;`;
+  private pointName(candidate: MicRouteCandidate): string {
+    return `Point(${candidate.inputSlot}[${candidate.inputChannel}],${this.config.audioModes.micMixOutputSlot}.OUT[${candidate.outputChannel}])`;
+  }
+
+  /** One packet asks for every point; Matrix answers them all in one reply. */
+  private async queryPointGains(candidates: MicRouteCandidate[]): Promise<Map<string, number>> {
+    const command = candidates
+      .map((candidate) => `${this.pointName(candidate)}.dBGain = ?;`)
+      .join(" ");
     const client = this.createMatrixClient();
     try {
-      const responses = await client.request(command, 500);
-      return parseGainResponse(responses[0]);
+      return parseGainResponses((await client.request(command, 500)).join(""));
     } finally {
       await client.close();
     }
@@ -524,6 +534,15 @@ export function isAudioDevicePresent(
   );
 }
 
+function isOutputSelected(
+  actual: { driver?: string; name?: string },
+  mode: AudioModeConfig
+): boolean {
+  return (
+    actual.driver === outputDriver(mode) && isSameAudioDevice(actual.name, mode.outputDeviceName)
+  );
+}
+
 function outputDriver(mode: AudioModeConfig): string {
   return mode.outputDriver ?? "WDM";
 }
@@ -562,17 +581,14 @@ function routeKey(inputSlot: string, route: AudioModeMicRoute): string {
   return `${inputSlot}[${route.inputChannel}]->${route.outputChannel}`;
 }
 
-function parseGainResponse(response: string | undefined): number | undefined {
-  if (!response) return undefined;
-
-  const match = response.match(/=\s*([^;]+);?\s*$/);
-  if (!match) return undefined;
-
-  const value = match[1]?.trim();
-  if (value === "-inf") return Number.NEGATIVE_INFINITY;
-
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
+function parseGainResponses(reply: string): Map<string, number> {
+  const gains = new Map<string, number>();
+  for (const match of reply.matchAll(/(Point\([^)]*\))\.dBGain\s*=\s*([^;]+);/g)) {
+    const value = match[2]?.trim();
+    const gain = value === "-inf" ? Number.NEGATIVE_INFINITY : Number(value);
+    if (match[1] && !Number.isNaN(gain)) gains.set(match[1], gain);
+  }
+  return gains;
 }
 
 function parseStringResponse(response: string | undefined): string | undefined {
