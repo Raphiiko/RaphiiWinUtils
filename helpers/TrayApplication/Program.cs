@@ -1,5 +1,4 @@
 using Microsoft.Web.WebView2.WinForms;
-using Microsoft.Win32;
 using System.Runtime.InteropServices;
 
 namespace TrayApplication;
@@ -16,74 +15,30 @@ internal static class Program
 
 internal sealed class TrayContext : ApplicationContext
 {
-    private const int IconRefreshDelay = 2000;
-    private readonly NotifyIcon icon;
+    private readonly TaskbarPanel panel;
     private readonly DashboardPopup popup;
-    private readonly System.Windows.Forms.Timer iconRefreshTimer =
-        new() { Interval = IconRefreshDelay };
 
     public TrayContext(string url)
     {
         popup = new DashboardPopup(url);
-        icon = new NotifyIcon
-        {
-            Icon = LoadTrayIcon(),
-            Text = "RaphiiWinUtils",
-            Visible = true,
-            ContextMenuStrip = new ContextMenuStrip()
-        };
-        icon.ContextMenuStrip.Items.Add("Exit", null, (_, _) =>
+        var ui = SynchronizationContext.Current!;
+        panel = TaskbarPanel.Start(LoadTrayIcon(), new Uri(url));
+        panel.ExitRequested += () => ui.Post(_ =>
         {
             Environment.ExitCode = 42;
             ExitThread();
-        });
-        icon.MouseDown += (_, eventArgs) =>
+        }, null);
+        panel.LeftButtonDown += () => ui.Post(_ => popup.SuppressNextDeactivate(), null);
+        panel.Clicked += () => ui.Post(_ => popup.Toggle(), null);
+        popup.VisibleChanged += (_, _) =>
         {
-            if (eventArgs.Button == MouseButtons.Left) popup.SuppressNextDeactivate();
+            if (!popup.Visible) panel.RefreshSoon();
         };
-        icon.MouseUp += (_, eventArgs) =>
-        {
-            if (eventArgs.Button == MouseButtons.Left) popup.Toggle();
-        };
-        iconRefreshTimer.Tick += (_, _) =>
-        {
-            iconRefreshTimer.Stop();
-            RefreshIcon();
-        };
-        SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
-    }
-
-    // Turning every monitor off drops the icon from the shell, and the shell does not
-    // send TaskbarCreated when they come back. Only a fresh Shell_NotifyIcon add returns it.
-    private void OnDisplaySettingsChanged(object? sender, EventArgs eventArgs)
-    {
-        // SystemEvents raises this off the UI thread, and NotifyIcon is not thread safe.
-        try
-        {
-            popup.BeginInvoke(() =>
-            {
-                iconRefreshTimer.Stop();
-                iconRefreshTimer.Start();
-            });
-        }
-        catch (Exception error) when (error is ObjectDisposedException or InvalidOperationException)
-        {
-            // The popup is gone because the app is exiting. There is no icon left to refresh.
-        }
-    }
-
-    private void RefreshIcon()
-    {
-        icon.Visible = false;
-        icon.Visible = true;
     }
 
     protected override void ExitThreadCore()
     {
-        SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
-        iconRefreshTimer.Dispose();
-        icon.Visible = false;
-        icon.Dispose();
+        // ponytail: the panel thread is a background thread, process exit destroys its window.
         popup.Dispose();
         base.ExitThreadCore();
     }
@@ -212,6 +167,7 @@ internal sealed class DashboardPopup : Form
     private async Task InitializeBrowserAsync()
     {
         await browser.EnsureCoreWebView2Async();
+        browser.CoreWebView2.Settings.IsStatusBarEnabled = false;
         browser.CoreWebView2.ProcessFailed += (_, eventArgs) =>
         {
             Console.Error.WriteLine($"WebView process failed: {eventArgs.ProcessFailedKind}");
