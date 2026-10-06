@@ -31,10 +31,14 @@ export class TrayApplication {
       return;
     }
 
-    this.process = spawn(executable, [url.toString()], {
-      windowsHide: true,
-      stdio: ["ignore", "ignore", "pipe"]
-    });
+    this.process = spawn(
+      executable,
+      [url.toString(), this.config.taskbarBluetoothDevice, this.config.djiMicCommand],
+      {
+        windowsHide: true,
+        stdio: ["ignore", "ignore", "pipe"]
+      }
+    );
     this.process.stderr?.on("data", (data: Buffer) =>
       this.log.warn("Tray diagnostic", { message: data.toString().trim() })
     );

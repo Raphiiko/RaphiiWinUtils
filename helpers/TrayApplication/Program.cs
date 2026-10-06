@@ -9,7 +9,13 @@ internal static class Program
     public static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
-        Application.Run(new TrayContext(args.FirstOrDefault() ?? "http://127.0.0.1:17642"));
+        Application.Run(
+            new TrayContext(
+                args.ElementAtOrDefault(0) ?? "http://127.0.0.1:17642",
+                args.ElementAtOrDefault(1) ?? "",
+                args.ElementAtOrDefault(2) ?? ""
+            )
+        );
     }
 }
 
@@ -18,18 +24,18 @@ internal sealed class TrayContext : ApplicationContext
     private readonly TaskbarPanel panel;
     private readonly DashboardPopup popup;
 
-    public TrayContext(string url)
+    public TrayContext(string url, string earbudsName, string djiMicCommand)
     {
         popup = new DashboardPopup(url);
         var ui = SynchronizationContext.Current!;
-        panel = TaskbarPanel.Start(LoadTrayIcon(), new Uri(url));
+        panel = TaskbarPanel.Start(LoadTrayIcon(), new Uri(url), earbudsName, djiMicCommand);
         panel.ExitRequested += () => ui.Post(_ =>
         {
             Environment.ExitCode = 42;
             ExitThread();
         }, null);
         panel.LeftButtonDown += () => ui.Post(_ => popup.SuppressNextDeactivate(), null);
-        panel.Clicked += () => ui.Post(_ => popup.Toggle(), null);
+        panel.Clicked += view => ui.Post(_ => popup.Toggle(view), null);
         popup.VisibleChanged += (_, _) =>
         {
             if (!popup.Visible) panel.RefreshSoon();
@@ -123,7 +129,8 @@ internal sealed class DashboardPopup : Form
         HideWithAnimation();
     }
 
-    public void Toggle()
+    // View is a dashboard hash such as "#audio".
+    public void Toggle(string view)
     {
         if (Visible)
         {
@@ -138,7 +145,7 @@ internal sealed class DashboardPopup : Form
         );
         Location = new Point(area.Right - Width - PopupMargin, area.Bottom - Height - PopupMargin);
         ShowWithAnimation();
-        _ = ResetToHomeWhenReadyAsync();
+        _ = ShowViewWhenReadyAsync(view);
     }
 
     [DllImport("dwmapi.dll")]
@@ -176,20 +183,20 @@ internal sealed class DashboardPopup : Form
         browser.Source = new Uri(url);
     }
 
-    private Task ResetToHomeAsync()
+    private Task ShowViewAsync(string view)
     {
         return browser.CoreWebView2.ExecuteScriptAsync(
-            "location.hash = '#home'; window.scrollTo(0, 0);"
+            $"location.hash = {System.Text.Json.JsonSerializer.Serialize(view)}; window.scrollTo(0, 0);"
         );
     }
 
-    private async Task ResetToHomeWhenReadyAsync()
+    private async Task ShowViewWhenReadyAsync(string view)
     {
         try
         {
             await browserInitialization.WaitAsync(TimeSpan.FromSeconds(10));
             if (IsDisposed) return;
-            await ResetToHomeAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            await ShowViewAsync(view).WaitAsync(TimeSpan.FromSeconds(5));
         }
         catch (Exception error)
         {

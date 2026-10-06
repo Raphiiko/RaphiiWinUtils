@@ -4,6 +4,7 @@ using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Net.Http.Json;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 
 namespace TrayApplication;
 
@@ -14,6 +15,7 @@ internal sealed class TaskbarPanel : NativeWindow
 {
     private const int TrackInterval = 1000;
     private const int ModeInterval = 2000;
+    private const int DeviceInterval = 10_000;
     private const int WsChild = 0x40000000;
     private const int WsClipSiblings = 0x04000000;
     private const int WsExLayered = 0x00080000;
@@ -28,28 +30,43 @@ internal sealed class TaskbarPanel : NativeWindow
     private const uint SwpNoMove = 0x0002;
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpShowWindow = 0x0040;
+    private const string HeadphoneGlyph = "";
+    private const string MicrophoneGlyph = "";
+    private const string ChargingGlyph = "";
 
     public event Action? LeftButtonDown;
-    public event Action? Clicked;
+    // Carries the dashboard view the clicked section opens, such as "#audio".
+    public event Action<string>? Clicked;
     public event Action? ExitRequested;
 
     private readonly Icon icon;
     private readonly Uri modesUri;
+    private readonly string earbudsName;
+    private readonly string djiMicCommand;
     private readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(2) };
     private readonly System.Windows.Forms.Timer trackTimer = new() { Interval = TrackInterval };
     private readonly System.Windows.Forms.Timer modeTimer = new() { Interval = ModeInterval };
+    private readonly System.Windows.Forms.Timer earbudsTimer = new() { Interval = DeviceInterval };
+    private readonly System.Windows.Forms.Timer lavMicTimer = new() { Interval = DeviceInterval };
     // Runs only while hovered, to notice the cursor leaving the panel.
     private readonly System.Windows.Forms.Timer hoverTimer = new() { Interval = 50 };
     private readonly ContextMenuStrip menu = new();
     private IntPtr taskbar;
     private Rectangle anchor;
-    private string label = "";
-    private bool hovered;
+    private Section[] sections = [];
+    private int hovered = -1;
+    private string modeName = "";
+    private string micName = "";
+    private BatteryStatus? earbuds;
+    private BatteryStatus? lavMic;
+    private bool lavMicReading;
     private bool lightTheme;
 
-    public TaskbarPanel(Icon icon, Uri baseUri)
+    public TaskbarPanel(Icon icon, Uri baseUri, string earbudsName, string djiMicCommand)
     {
         this.icon = icon;
+        this.earbudsName = earbudsName;
+        this.djiMicCommand = djiMicCommand;
         modesUri = new Uri(baseUri, "/audio/modes");
         menu.Items.Add("Exit", null, (_, _) => ExitRequested?.Invoke());
         // RefreshSoon marshals through the menu, so its handle must exist on this thread.
@@ -59,24 +76,36 @@ internal sealed class TaskbarPanel : NativeWindow
         {
             if (GetCursorPos(out var cursor) && WindowFromPoint(cursor) == Handle) return;
             hoverTimer.Stop();
-            hovered = false;
-            Render();
+            SetHovered(-1);
         };
         modeTimer.Tick += async (_, _) => await RefreshModeAsync();
+        earbudsTimer.Tick += async (_, _) => await RefreshEarbudsAsync();
+        lavMicTimer.Tick += async (_, _) => await RefreshLavMicAsync();
         trackTimer.Start();
         modeTimer.Start();
         Track();
         _ = RefreshModeAsync();
+        if (earbudsName.Length > 0)
+        {
+            earbudsTimer.Start();
+            _ = RefreshEarbudsAsync();
+        }
+
+        if (djiMicCommand.Length > 0)
+        {
+            lavMicTimer.Start();
+            _ = RefreshLavMicAsync();
+        }
     }
 
     // Starts the panel on a dedicated STA thread. Events are raised on that thread.
-    public static TaskbarPanel Start(Icon icon, Uri baseUri)
+    public static TaskbarPanel Start(Icon icon, Uri baseUri, string earbudsName, string djiMicCommand)
     {
         var created = new TaskCompletionSource<TaskbarPanel>();
         var thread = new Thread(() =>
         {
             SetThreadDpiAwarenessContext(new IntPtr(-4));
-            created.SetResult(new TaskbarPanel(icon, baseUri));
+            created.SetResult(new TaskbarPanel(icon, baseUri, earbudsName, djiMicCommand));
             Application.Run();
         })
         {
@@ -92,15 +121,17 @@ internal sealed class TaskbarPanel : NativeWindow
 
     private async Task RefreshModeAsync()
     {
-        string next;
+        string mode, mic;
         try
         {
             var state = await http.GetFromJsonAsync<ModesResponse>(modesUri);
-            next = state?.Modes.FirstOrDefault(mode => mode.Id == state.Active)?.Name ?? "";
+            mode = state?.Modes.FirstOrDefault(item => item.Id == state.Active)?.Name ?? "";
+            mic = state?.Mics.FirstOrDefault(item => item.Id == state.ActiveMic)?.Name ?? "";
         }
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException)
         {
-            next = "";
+            mode = "";
+            mic = "";
         }
 
         var light = Registry.GetValue(
@@ -108,9 +139,45 @@ internal sealed class TaskbarPanel : NativeWindow
             "SystemUsesLightTheme",
             0
         ) is 1;
-        if (next == label && light == lightTheme) return;
-        label = next;
+        if (mode == modeName && mic == micName && light == lightTheme) return;
+        modeName = mode;
+        micName = mic;
         lightTheme = light;
+        Render();
+    }
+
+    private async Task RefreshEarbudsAsync()
+    {
+        var next = await Task.Run(() => BluetoothBattery.Read(earbudsName));
+        if (next == earbuds) return;
+        earbuds = next;
+        Render();
+    }
+
+    private async Task RefreshLavMicAsync()
+    {
+        // djimic must never run twice at once: the receiver accepts one client.
+        if (lavMicReading) return;
+        lavMicReading = true;
+        BatteryStatus? next;
+        bool busy;
+        try
+        {
+            (next, busy) = await DjiMic.ReadAsync(djiMicCommand);
+        }
+        catch (Exception error) when (error is JsonException or KeyNotFoundException or InvalidOperationException)
+        {
+            Console.Error.WriteLine($"Could not read djimic status: {error.Message}");
+            (next, busy) = (null, false);
+        }
+        finally
+        {
+            lavMicReading = false;
+        }
+
+        lavMicTimer.Interval = busy ? DjiMic.BusyRetryInterval : DeviceInterval;
+        if (next == lavMic) return;
+        lavMic = next;
         Render();
     }
 
@@ -152,21 +219,98 @@ internal sealed class TaskbarPanel : NativeWindow
         Render();
     }
 
+    private void SetHovered(int index)
+    {
+        if (index == hovered) return;
+        hovered = index;
+        Render();
+    }
+
     private void Render()
     {
         if (anchor.Height == 0) return;
         var scale = GetDpiForWindow(Handle) / 96f;
-        var padding = (int)(10 * scale);
-        var iconSize = (int)(20 * scale);
-        var gap = (int)(8 * scale);
-        using var font = new Font("Segoe UI", 12 * scale, GraphicsUnit.Pixel);
-        var textWidth = label.Length == 0
-            ? 0
-            : TextRenderer.MeasureText(label, font).Width;
-        var width = padding * 2 + iconSize + (textWidth > 0 ? gap + textWidth : 0);
         var height = anchor.Height;
+        var padding = (int)(10 * scale);
+        var gap = (int)(6 * scale);
+        var iconSize = (int)(20 * scale);
+        using var font = new Font("Segoe UI", 12 * scale, GraphicsUnit.Pixel);
+        using var small = new Font("Segoe UI", 11 * scale, GraphicsUnit.Pixel);
+        using var glyphs = new Font("Segoe Fluent Icons", 14 * scale, GraphicsUnit.Pixel);
+        using var smallGlyphs = new Font("Segoe Fluent Icons", 11 * scale, GraphicsUnit.Pixel);
+        using var measure = Graphics.FromHwnd(IntPtr.Zero);
+        int Width(string text, Font with) =>
+            text.Length == 0
+                ? 0
+                : (int)Math.Ceiling(
+                    measure.MeasureString(text, with, PointF.Empty, StringFormat.GenericTypographic).Width
+                );
 
-        using var bitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+        var foreground = lightTheme ? Color.Black : Color.White;
+        var dim = Color.FromArgb(170, foreground);
+        var list = new List<Section>
+        {
+            new(
+                "#home",
+                padding * 2 + iconSize,
+                (graphics, bounds) =>
+                {
+                    using var sized = new Icon(icon, iconSize, iconSize);
+                    graphics.DrawIcon(
+                        sized,
+                        new Rectangle(bounds.X + padding, (height - iconSize) / 2, iconSize, iconSize)
+                    );
+                }
+            )
+        };
+
+        if (modeName.Length > 0 || micName.Length > 0)
+        {
+            var width = Math.Max(Width(modeName, font), Width(micName, small));
+            list.Add(
+                new(
+                    "#audio",
+                    padding * 2 + width,
+                    (graphics, bounds) =>
+                    {
+                        var middle = height / 2f;
+                        DrawText(graphics, modeName, font, foreground, bounds.X + padding, middle - font.Height, font.Height);
+                        DrawText(graphics, micName, small, dim, bounds.X + padding, middle, small.Height);
+                    }
+                )
+            );
+        }
+
+        foreach (var (glyph, status) in new[] { (HeadphoneGlyph, earbuds), (MicrophoneGlyph, lavMic) })
+        {
+            if (status is null) continue;
+            var text = status.Note ?? (status.Percent is { } percent ? $"{percent}%" : "?");
+            var glyphWidth = Width(glyph, glyphs);
+            var textWidth = Width(text, font);
+            var chargeWidth = status.Charging ? Width(ChargingGlyph, smallGlyphs) : 0;
+            list.Add(
+                new(
+                    "#home",
+                    padding * 2 + glyphWidth + gap + textWidth + chargeWidth,
+                    (graphics, bounds) =>
+                    {
+                        var x = bounds.X + padding;
+                        DrawText(graphics, glyph, glyphs, foreground, x, 0, height);
+                        x += glyphWidth + gap;
+                        DrawText(graphics, text, font, foreground, x, 0, height);
+                        if (status.Charging)
+                            DrawText(graphics, ChargingGlyph, smallGlyphs, foreground, x + textWidth, 0, height);
+                    }
+                )
+            );
+        }
+
+        // The panel grows leftward from the tray, so the optional sections go first
+        // and the static ones keep their position when a device comes or goes.
+        list.Reverse();
+        sections = [.. list];
+        var total = sections.Sum(section => section.Width);
+        using var bitmap = new Bitmap(total, height, PixelFormat.Format32bppArgb);
         using (var graphics = Graphics.FromImage(bitmap))
         {
             graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -174,37 +318,24 @@ internal sealed class TaskbarPanel : NativeWindow
             // Alpha 0 pixels are click-through on a layered window, so the background is never fully clear.
             graphics.Clear(Color.FromArgb(1, 0, 0, 0));
             var inset = (int)(4 * scale);
-            if (hovered)
+            var x = 0;
+            for (var index = 0; index < sections.Length; index++)
             {
-                using var hover = new SolidBrush(
-                    lightTheme ? Color.FromArgb(20, 0, 0, 0) : Color.FromArgb(24, 255, 255, 255)
-                );
-                using var path = RoundedRectangle(
-                    new Rectangle(0, inset, width - 1, height - inset * 2 - 1),
-                    (int)(4 * scale)
-                );
-                graphics.FillPath(hover, path);
-            }
+                var bounds = new Rectangle(x, 0, sections[index].Width, height);
+                if (index == hovered)
+                {
+                    using var hover = new SolidBrush(
+                        lightTheme ? Color.FromArgb(20, 0, 0, 0) : Color.FromArgb(24, 255, 255, 255)
+                    );
+                    using var path = RoundedRectangle(
+                        new Rectangle(bounds.X, inset, bounds.Width - 1, height - inset * 2 - 1),
+                        (int)(4 * scale)
+                    );
+                    graphics.FillPath(hover, path);
+                }
 
-            using (var sized = new Icon(icon, iconSize, iconSize))
-            {
-                graphics.DrawIcon(
-                    sized,
-                    new Rectangle(padding, (height - iconSize) / 2, iconSize, iconSize)
-                );
-            }
-
-            if (textWidth > 0)
-            {
-                using var brush = new SolidBrush(lightTheme ? Color.Black : Color.White);
-                using var format = new StringFormat { LineAlignment = StringAlignment.Center };
-                graphics.DrawString(
-                    label,
-                    font,
-                    brush,
-                    new RectangleF(padding + iconSize + gap, 0, textWidth + gap, height),
-                    format
-                );
+                sections[index].Draw(graphics, bounds);
+                x += bounds.Width;
             }
         }
 
@@ -217,13 +348,13 @@ internal sealed class TaskbarPanel : NativeWindow
             SetWindowPos(
                 Handle,
                 IntPtr.Zero,
-                anchor.X - width,
+                anchor.X - total,
                 anchor.Y,
-                width,
+                total,
                 height,
                 SwpNoActivate | SwpShowWindow
             );
-            var size = new NativeSize { Width = width, Height = height };
+            var size = new NativeSize { Width = total, Height = height };
             var source = new NativePoint();
             var blend = new BlendFunction { SourceConstantAlpha = 255, AlphaFormat = 1 };
             UpdateLayeredWindow(Handle, screen, IntPtr.Zero, ref size, memory, ref source, 0, ref blend, 2);
@@ -235,6 +366,37 @@ internal sealed class TaskbarPanel : NativeWindow
             DeleteDC(memory);
             ReleaseDC(IntPtr.Zero, screen);
         }
+    }
+
+    private static void DrawText(
+        Graphics graphics,
+        string text,
+        Font font,
+        Color color,
+        float x,
+        float y,
+        float height
+    )
+    {
+        using var brush = new SolidBrush(color);
+        using var format = new StringFormat(StringFormat.GenericTypographic)
+        {
+            LineAlignment = StringAlignment.Center,
+            FormatFlags = StringFormatFlags.NoWrap
+        };
+        graphics.DrawString(text, font, brush, new RectangleF(x, y, 10_000, height), format);
+    }
+
+    private int SectionAt(IntPtr lParam)
+    {
+        var x = (short)(lParam.ToInt64() & 0xFFFF);
+        for (var index = 0; index < sections.Length; index++)
+        {
+            if (x < sections[index].Width) return index;
+            x -= (short)sections[index].Width;
+        }
+
+        return -1;
     }
 
     private static GraphicsPath RoundedRectangle(Rectangle rectangle, int radius)
@@ -256,16 +418,15 @@ internal sealed class TaskbarPanel : NativeWindow
             case WmMouseActivate:
                 message.Result = MaNoActivate;
                 return;
-            case WmMouseMove when !hovered:
-                hovered = true;
+            case WmMouseMove:
                 hoverTimer.Start();
-                Render();
+                SetHovered(SectionAt(message.LParam));
                 break;
             case WmLButtonDown:
                 LeftButtonDown?.Invoke();
                 break;
-            case WmLButtonUp:
-                Clicked?.Invoke();
+            case WmLButtonUp when SectionAt(message.LParam) is var index and >= 0:
+                Clicked?.Invoke(sections[index].View);
                 break;
             case WmRButtonUp:
                 menu.Show(Cursor.Position);
@@ -275,9 +436,16 @@ internal sealed class TaskbarPanel : NativeWindow
         base.WndProc(ref message);
     }
 
-    private sealed record ModesResponse(List<ModeSummary> Modes, string? Active);
+    private sealed record Section(string View, int Width, Action<Graphics, Rectangle> Draw);
 
-    private sealed record ModeSummary(string Id, string Name);
+    private sealed record ModesResponse(
+        List<NamedItem> Modes,
+        string? Active,
+        List<NamedItem> Mics,
+        string? ActiveMic
+    );
+
+    private sealed record NamedItem(string Id, string Name);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NativeRect

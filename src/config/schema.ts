@@ -180,6 +180,10 @@ export interface ControlConfig {
   enabled: boolean;
   host: string;
   port: number;
+  /** Paired Bluetooth device whose battery the taskbar panel shows while it is connected. Empty = off. */
+  taskbarBluetoothDevice: string;
+  /** DJI Mic Control CLI the taskbar panel polls for the lav mic battery. Empty = off. */
+  djiMicCommand: string;
 }
 
 export interface NotificationConfig {
@@ -413,7 +417,9 @@ export const defaultConfig: AppConfig = {
   control: {
     enabled: true,
     host: "127.0.0.1",
-    port: 17642
+    port: 17642,
+    taskbarBluetoothDevice: "Nothing Ear (a)",
+    djiMicCommand: "djimic"
   },
   panelContext: {
     enabled: true,
