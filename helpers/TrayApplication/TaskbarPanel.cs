@@ -30,7 +30,7 @@ internal sealed class TaskbarPanel : NativeWindow
     private const uint SwpNoMove = 0x0002;
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpShowWindow = 0x0040;
-    private const string HeadphoneGlyph = "";
+    private const string EarbudsGlyph = "";
     private const string MicrophoneGlyph = "";
     private const string ChargingGlyph = "";
 
@@ -281,7 +281,7 @@ internal sealed class TaskbarPanel : NativeWindow
             );
         }
 
-        foreach (var (glyph, status) in new[] { (HeadphoneGlyph, earbuds), (MicrophoneGlyph, lavMic) })
+        foreach (var (glyph, status) in new[] { (EarbudsGlyph, earbuds), (MicrophoneGlyph, lavMic) })
         {
             if (status is null) continue;
             var text = status.Note ?? (status.Percent is { } percent ? $"{percent}%" : "?");
@@ -290,7 +290,7 @@ internal sealed class TaskbarPanel : NativeWindow
             var chargeWidth = status.Charging ? Width(ChargingGlyph, smallGlyphs) : 0;
             list.Add(
                 new(
-                    "#home",
+                    null,
                     padding * 2 + glyphWidth + gap + textWidth + chargeWidth,
                     (graphics, bounds) =>
                     {
@@ -387,12 +387,13 @@ internal sealed class TaskbarPanel : NativeWindow
         graphics.DrawString(text, font, brush, new RectangleF(x, y, 10_000, height), format);
     }
 
+    // Returns the clickable section under the cursor, or -1. Status sections are not clickable.
     private int SectionAt(IntPtr lParam)
     {
         var x = (short)(lParam.ToInt64() & 0xFFFF);
         for (var index = 0; index < sections.Length; index++)
         {
-            if (x < sections[index].Width) return index;
+            if (x < sections[index].Width) return sections[index].View is null ? -1 : index;
             x -= (short)sections[index].Width;
         }
 
@@ -422,11 +423,11 @@ internal sealed class TaskbarPanel : NativeWindow
                 hoverTimer.Start();
                 SetHovered(SectionAt(message.LParam));
                 break;
-            case WmLButtonDown:
+            case WmLButtonDown when SectionAt(message.LParam) >= 0:
                 LeftButtonDown?.Invoke();
                 break;
             case WmLButtonUp when SectionAt(message.LParam) is var index and >= 0:
-                Clicked?.Invoke(sections[index].View);
+                Clicked?.Invoke(sections[index].View!);
                 break;
             case WmRButtonUp:
                 menu.Show(Cursor.Position);
@@ -436,7 +437,8 @@ internal sealed class TaskbarPanel : NativeWindow
         base.WndProc(ref message);
     }
 
-    private sealed record Section(string View, int Width, Action<Graphics, Rectangle> Draw);
+    // View is the dashboard hash the section opens, or null for a status section.
+    private sealed record Section(string? View, int Width, Action<Graphics, Rectangle> Draw);
 
     private sealed record ModesResponse(
         List<NamedItem> Modes,
