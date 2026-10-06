@@ -31,6 +31,15 @@ export interface AudioConfig {
   maxDb: number;
   zeroVolumeMutes: boolean;
   channels: AudioChannelConfig[];
+  lockedDefaultDevices: LockedDefaultDevicesConfig;
+}
+
+/** Windows default devices that are set back whenever something changes them. Empty skips a role. */
+export interface LockedDefaultDevicesConfig {
+  playback: string;
+  communicationsPlayback: string;
+  recording: string;
+  communicationsRecording: string;
 }
 
 export interface AudioChannelConfig {
@@ -48,15 +57,30 @@ export interface AudioModesConfig {
   outputRetryCount: number;
   routeRetryCount: number;
   routeRetryDelayMs: number;
+  /** How often RWU checks Matrix WIN slots for a device that stopped running. 0 turns it off. */
+  slotRecoveryPollMs: number;
+  mics: Record<string, AudioMicConfig>;
   modes: Record<string, AudioModeConfig>;
 }
 
 export interface AudioModeConfig {
   name: string;
   outputDeviceName: string;
-  micInputSlot: string;
-  micRoutes: AudioModeMicRoute[];
+  /**
+   * Defaults to WDM, which Matrix opens exclusively, so it fails while another app uses the device.
+   * MME shares the device but adds latency, and its names stop at 31 characters.
+   */
+  outputDriver?: "WDM" | "MME";
+  /** Id in `mics`; applying the mode also switches to this mic. */
+  mic: string;
   channelVolumeOverrides?: Record<string, number>;
+}
+
+export interface AudioMicConfig {
+  name: string;
+  /** Matrix input slot that holds the mic's device. */
+  inputSlot: string;
+  routes: AudioModeMicRoute[];
 }
 
 export interface AudioModeMicRoute {
@@ -216,7 +240,13 @@ export const defaultConfig: AppConfig = {
       { name: "Voice", endpointNameContains: "Voice Audio", presetPatch: 3 },
       { name: "Music", endpointNameContains: "Music Audio", presetPatch: 4 },
       { name: "Game", endpointNameContains: "Game Audio", presetPatch: 5 }
-    ]
+    ],
+    lockedDefaultDevices: {
+      playback: "System Audio (VB-Audio Matrix VAIO)",
+      communicationsPlayback: "Voice Audio (VB-Audio Matrix VAIO)",
+      recording: "Microphone Mix (VB-Audio Matrix VAIO)",
+      communicationsRecording: "Microphone Mix (VB-Audio Matrix VAIO)"
+    }
   },
   audioModes: {
     mainOutputSlot: "WIN1.OUT",
@@ -227,63 +257,82 @@ export const defaultConfig: AppConfig = {
     outputRetryCount: 2,
     routeRetryCount: 5,
     routeRetryDelayMs: 500,
-    modes: {
-      "headset-desk-mic": {
-        name: "Headset + Desk Mic",
-        outputDeviceName: "Headset (3- Arctis Nova Pro Wireless)",
-        micInputSlot: "WIN1.IN",
-        micRoutes: [
+    slotRecoveryPollMs: 2000,
+    mics: {
+      desktop: {
+        name: "Desk",
+        inputSlot: "WIN1.IN",
+        routes: [
           { inputChannel: 1, outputChannel: 1 },
           { inputChannel: 1, outputChannel: 2 }
-        ]
-      },
-      beyond: {
-        name: "Beyond",
-        outputDeviceName: "Bigscreen Beyond (USB-C to 3.5mm Headphone Jack Adapter)",
-        micInputSlot: "WIN3.IN",
-        channelVolumeOverrides: {
-          Game: 100
-        },
-        micRoutes: [
-          { inputChannel: 1, outputChannel: 1 },
-          { inputChannel: 2, outputChannel: 2 }
         ]
       },
       headset: {
         name: "Headset",
-        outputDeviceName: "Headset (3- Arctis Nova Pro Wireless)",
-        micInputSlot: "WIN2.IN",
-        micRoutes: [
+        inputSlot: "WIN2.IN",
+        routes: [
           { inputChannel: 1, outputChannel: 1 },
           { inputChannel: 2, outputChannel: 2 }
         ]
       },
+      lav: {
+        name: "Lav",
+        inputSlot: "WIN7.IN",
+        routes: [
+          { inputChannel: 1, outputChannel: 1 },
+          { inputChannel: 2, outputChannel: 2 }
+        ]
+      },
+      steam: {
+        name: "Steam",
+        inputSlot: "WIN4.IN",
+        routes: [
+          { inputChannel: 1, outputChannel: 1 },
+          { inputChannel: 2, outputChannel: 2 }
+        ]
+      },
+      beyond: {
+        name: "Beyond",
+        inputSlot: "WIN3.IN",
+        routes: [
+          { inputChannel: 1, outputChannel: 1 },
+          { inputChannel: 2, outputChannel: 2 }
+        ]
+      }
+    },
+    modes: {
+      beyond: {
+        name: "Beyond",
+        outputDeviceName: "Bigscreen Beyond (USB-C to 3.5mm Headphone Jack Adapter)",
+        mic: "beyond",
+        channelVolumeOverrides: {
+          Game: 100
+        }
+      },
+      headset: {
+        name: "Headset",
+        outputDeviceName: "Headset (3- Arctis Nova Pro Wireless)",
+        mic: "headset"
+      },
       iems: {
         name: "IEMs",
         outputDeviceName: "Headphones (2- USB-C to 3.5mm Headphone Jack Adapter)",
-        micInputSlot: "WIN1.IN",
-        micRoutes: [
-          { inputChannel: 1, outputChannel: 1 },
-          { inputChannel: 1, outputChannel: 2 }
-        ]
+        mic: "desktop"
       },
       "desk-speakers": {
         name: "Desk Speakers",
         outputDeviceName: "Desktop Speakers (USB SPDIF Adapter)",
-        micInputSlot: "WIN1.IN",
-        micRoutes: [
-          { inputChannel: 1, outputChannel: 1 },
-          { inputChannel: 1, outputChannel: 2 }
-        ]
+        mic: "desktop"
       },
       tws: {
         name: "TWS",
         outputDeviceName: "Headphones (Nothing Ear (a))",
-        micInputSlot: "WIN1.IN",
-        micRoutes: [
-          { inputChannel: 1, outputChannel: 1 },
-          { inputChannel: 1, outputChannel: 2 }
-        ]
+        mic: "desktop"
+      },
+      "steam-link": {
+        name: "Steam Link",
+        outputDeviceName: "Steam Link (Steam Streaming Speakers)",
+        mic: "steam"
       }
     }
   },

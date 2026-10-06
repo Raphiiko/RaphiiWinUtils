@@ -574,6 +574,26 @@
         letter-spacing: 0.18em;
         color: var(--indigo);
       }
+      .mic-label {
+        margin: 1.125rem 0 0.75rem;
+      }
+      .mics {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 0.5rem;
+      }
+      .mode.mic {
+        display: flex;
+        justify-content: center;
+        padding: 0.625rem 0.5rem;
+        text-align: center;
+      }
+      .mode.mic .name {
+        font-size: 0.875rem;
+      }
+      .mode.mic::after {
+        content: none;
+      }
       .mode.pending::after {
         content: "SWITCHING…";
         position: absolute;
@@ -1358,6 +1378,8 @@
           <section class="card">
             <div class="card-label">Output routing</div>
             <div class="modes" id="modeGrid"></div>
+            <div class="card-label mic-label">Microphone</div>
+            <div class="mics" id="micGrid"></div>
           </section>
           <section class="card">
             <div class="card-label">Channel levels</div>
@@ -1493,7 +1515,9 @@
         libraryTab: "presets",
         loadedPreset: "",
         activeMode: null,
-        modes: []
+        modes: [],
+        activeMic: null,
+        mics: []
       };
 
       const el = (id) => document.getElementById(id);
@@ -1677,6 +1701,8 @@
           ]);
           state.modes = modes.modes ?? [];
           state.activeMode = modes.active ?? null;
+          state.mics = modes.mics ?? [];
+          state.activeMic = modes.activeMic ?? null;
           renderModes();
           renderDictation(dictation);
           if (!interacting) renderVolumes(volumes.channels ?? []);
@@ -1718,7 +1744,6 @@
       };
 
       const modeIcons = {
-        mic: '<path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z"/><path d="M8 21h4M10 15v6"/>',
         vr: '<path d="M2 12a5 5 0 0 1 5-5h10a5 5 0 0 1 5 5v2a5 5 0 0 1-5 5h-1l-2-3h-4l-2 3H7a5 5 0 0 1-5-5z"/>',
         headset:
           '<path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>',
@@ -1728,8 +1753,7 @@
       };
       function iconFor(mode) {
         const haystack = `${mode.id} ${mode.name}`.toLowerCase();
-        if (haystack.includes("mic")) return modeIcons.mic;
-        if (haystack.includes("beyond") || haystack.includes("vr")) return modeIcons.vr;
+        if (haystack.includes("beyond") || haystack.includes("steam")) return modeIcons.vr;
         if (haystack.includes("iem") || haystack.includes("tws") || haystack.includes("ear"))
           return modeIcons.buds;
         if (haystack.includes("speaker")) return modeIcons.speaker;
@@ -1737,8 +1761,9 @@
       }
 
       let switching = false;
-      const modeOrder = ["desk-speakers", "beyond", "headset", "headset-desk-mic", "iems", "tws"];
+      const modeOrder = ["desk-speakers", "beyond", "headset", "steam-link", "iems", "tws"];
       function renderModes() {
+        renderMics();
         const grid = el("modeGrid");
         grid.replaceChildren();
         for (const mode of [...state.modes].sort((a, b) => {
@@ -1769,7 +1794,39 @@
             try {
               await call(`/audio/modes/${encodeURIComponent(mode.id)}`, { method: "POST" });
               state.activeMode = mode.id;
+              state.activeMic = mode.mic;
               say(`Audio output set to ${mode.name}.`);
+            } catch (error) {
+              say(error.message, true);
+            }
+            switching = false;
+            refreshAudio();
+          };
+          grid.append(button);
+        }
+      }
+
+      function renderMics() {
+        const grid = el("micGrid");
+        grid.replaceChildren();
+        for (const mic of state.mics) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "mode mic";
+          button.disabled = switching;
+          button.setAttribute("aria-pressed", String(mic.id === state.activeMic));
+          const name = document.createElement("span");
+          name.className = "name";
+          name.textContent = mic.name;
+          button.append(name);
+          button.onclick = async () => {
+            switching = true;
+            renderModes();
+            say(`Switching mic to ${mic.name}…`);
+            try {
+              await call(`/audio/mics/${encodeURIComponent(mic.id)}`, { method: "POST" });
+              state.activeMic = mic.id;
+              say(`Mic set to ${mic.name}.`);
             } catch (error) {
               say(error.message, true);
             }

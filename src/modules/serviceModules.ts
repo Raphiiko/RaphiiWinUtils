@@ -1,4 +1,5 @@
 import type { AppConfig } from "../config/schema.ts";
+import { MatrixSlotRecovery } from "../matrix/matrixSlotRecovery.ts";
 import { MqttAudioSyncService } from "../mqtt/mqttAudioSync.ts";
 import { ClipboardAutomationService } from "../service/clipboardAutomationService.ts";
 import { AudioModeService } from "../service/audioModeService.ts";
@@ -26,7 +27,7 @@ export function createServiceModules(
   const audioModeService = new AudioModeService(
     config,
     logger,
-    { publishMode: async () => {} },
+    { publishMode: async () => {}, publishMic: async () => {} },
     {
       filterPreOutputVolumePolicies: (policies) =>
         channelVolumeService.policiesThatNeedApply(policies)
@@ -42,6 +43,14 @@ export function createServiceModules(
     vrChatRecoveryService
   );
   audioModeService.setPublisher(mqttAudioSync);
+  const matrixSlotRecovery = new MatrixSlotRecovery(
+    config.matrix,
+    config.audioModes.slotRecoveryPollMs,
+    audioModeService,
+    () => channelVolumeService.renderEndpointNames(),
+    logger
+  );
+  channelVolumeService.onEndpointsChange(() => matrixSlotRecovery.endpointsChanged());
   const dictationMuteService = new DictationMuteService(config.dictationMute, logger);
   // Shared: the control server hosts the plugin's socket, the panel context
   // server reads and writes the brush through it.
@@ -67,6 +76,7 @@ export function createServiceModules(
   return [
     serviceModule("updater", updater),
     serviceModule("channel-volume", channelVolumeService),
+    serviceModule("matrix-slot-recovery", matrixSlotRecovery),
     serviceModule("vr-recovery", vrChatRecoveryService),
     serviceModule("audio-control", {
       start: () => {

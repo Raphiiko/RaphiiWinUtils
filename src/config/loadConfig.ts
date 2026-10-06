@@ -36,6 +36,10 @@ function mergeConfig(base: AppConfig, override: Partial<AppConfig>): AppConfig {
     audioModes: {
       ...base.audioModes,
       ...override.audioModes,
+      mics: {
+        ...base.audioModes.mics,
+        ...override.audioModes?.mics
+      },
       modes: {
         ...base.audioModes.modes,
         ...modeOverrides

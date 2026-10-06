@@ -19,6 +19,8 @@ export class ChannelVolumeService {
   private volumeController?: AudioEndpointVolumeController;
   private readonly latestStates = new Map<string, ChannelState>();
   private readonly listeners = new Set<(state: ChannelState) => void>();
+  private endpointNames: string[] = [];
+  private readonly endpointListeners = new Set<() => void>();
 
   constructor(config: AppConfig, logger: Logger, volumeController?: AudioEndpointVolumeController) {
     this.config = config;
@@ -27,7 +29,11 @@ export class ChannelVolumeService {
   }
 
   start(): void {
-    const watcher = new AudioEndpointWatcher(this.config.audio.endpointResyncMs, this.log);
+    const watcher = new AudioEndpointWatcher(
+      this.config.audio.endpointResyncMs,
+      this.config.audio.lockedDefaultDevices,
+      this.log
+    );
     this.volumeController ??= new WatchedAudioEndpointVolumeController(watcher);
     const matrixClient = new VbanTextClient(this.config.matrix, this.log);
     const matrixSync = new MatrixPresetSync(matrixClient, this.log);
@@ -41,6 +47,12 @@ export class ChannelVolumeService {
       endpoints$
         .pipe(
           tap((endpoints) => {
+            const names = endpoints.map((endpoint) => endpoint.name).sort();
+            if (names.join("\n") !== this.endpointNames.join("\n")) {
+              this.endpointNames = names;
+              for (const listener of this.endpointListeners) listener();
+            }
+
             for (const endpoint of endpoints) {
               if (seenEndpoints.has(endpoint.id)) continue;
               seenEndpoints.add(endpoint.id);
@@ -92,6 +104,16 @@ export class ChannelVolumeService {
 
   listStates(): ChannelState[] {
     return [...this.latestStates.values()].sort((a, b) => a.presetPatch - b.presetPatch);
+  }
+
+  /** Names of the active Windows render endpoints. */
+  renderEndpointNames(): string[] {
+    return this.endpointNames;
+  }
+
+  onEndpointsChange(listener: () => void): () => void {
+    this.endpointListeners.add(listener);
+    return () => this.endpointListeners.delete(listener);
   }
 
   configuredChannelNames(): string[] {

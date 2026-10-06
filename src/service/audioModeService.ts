@@ -1,4 +1,9 @@
-import type { AppConfig, AudioModeConfig, AudioModeMicRoute } from "../config/schema.ts";
+import type {
+  AppConfig,
+  AudioMicConfig,
+  AudioModeConfig,
+  AudioModeMicRoute
+} from "../config/schema.ts";
 import {
   WindowsAudioEndpointVolumeController,
   type AudioEndpointVolumeController,
@@ -25,13 +30,20 @@ interface AudioModeServiceDependencies {
 }
 
 const preSwitchVolumePolicyWaitMs = 1_000;
+const pendingModeTimeoutMs = 60_000;
+const pendingModeRetryGapMs = 5_000;
 
 export interface AudioModeSummary {
   id: string;
   name: string;
   outputDeviceName: string;
-  micInputSlot: string;
-  micRoutes: Array<{ inputChannel: number; outputChannel: number }>;
+  mic: string;
+}
+
+export interface AudioMicSummary {
+  id: string;
+  name: string;
+  inputSlot: string;
 }
 
 export class AudioModeService {
@@ -45,6 +57,8 @@ export class AudioModeService {
     policies: AudioEndpointVolumePolicy[]
   ) => AudioEndpointVolumePolicy[];
   private applyModeTail: Promise<unknown> = Promise.resolve();
+  private queuedApplies = 0;
+  private pendingMode?: { id: string; until: number; nextRetryAt: number };
 
   constructor(
     config: AppConfig,
@@ -69,8 +83,15 @@ export class AudioModeService {
       id,
       name: mode.name,
       outputDeviceName: mode.outputDeviceName,
-      micInputSlot: mode.micInputSlot,
-      micRoutes: mode.micRoutes
+      mic: mode.mic
+    }));
+  }
+
+  listMics(): AudioMicSummary[] {
+    return Object.entries(this.config.audioModes.mics).map(([id, mic]) => ({
+      id,
+      name: mic.name,
+      inputSlot: mic.inputSlot
     }));
   }
 
@@ -82,10 +103,63 @@ export class AudioModeService {
     this.publisher = publisher;
   }
 
+  /** Switches the output and the mode's preferred mic. */
   async applyMode(id: string): Promise<AudioModeSummary> {
-    const operation = this.applyModeTail.then(() => this.applyModeOnce(id));
+    return this.enqueue(() => this.applyModeOnce(id));
+  }
+
+  /** Switches only the mic and leaves the output alone. */
+  async applyMic(id: string): Promise<AudioMicSummary> {
+    return this.enqueue(() => this.applyMicOnce(id));
+  }
+
+  private async enqueue<T>(apply: () => Promise<T>): Promise<T> {
+    this.queuedApplies++;
+    const operation = this.applyModeTail.then(apply).finally(() => {
+      this.queuedApplies--;
+    });
     this.applyModeTail = operation.catch(() => undefined);
     return operation;
+  }
+
+  isApplying(): boolean {
+    return this.queuedApplies > 0;
+  }
+
+  /**
+   * A mode whose output could not be selected stays pending for a minute, so pressing it
+   * before the device has connected still takes effect once Windows shows the endpoint.
+   */
+  async retryPendingMode(renderEndpointNames: string[], now = Date.now()): Promise<void> {
+    const pending = this.pendingMode;
+    if (!pending || this.isApplying() || now < pending.nextRetryAt) return;
+
+    if (now > pending.until) {
+      this.pendingMode = undefined;
+      this.log.info("Gave up waiting for the audio mode output to connect", { id: pending.id });
+      return;
+    }
+
+    const mode = this.getMode(pending.id);
+    if (
+      !mode ||
+      !isAudioDevicePresent(renderEndpointNames, mode.outputDeviceName, mode.outputDriver)
+    ) {
+      return;
+    }
+
+    this.log.info("Audio mode output connected; applying the pending mode", { id: pending.id });
+    try {
+      await this.applyMode(pending.id);
+    } catch (error: unknown) {
+      if (this.pendingMode?.id === pending.id) {
+        this.pendingMode = { ...pending, nextRetryAt: now + pendingModeRetryGapMs };
+      }
+      this.log.warn("Pending audio mode still could not be applied", {
+        id: pending.id,
+        error: formatUnknownError(error)
+      });
+    }
   }
 
   private async applyModeOnce(id: string): Promise<AudioModeSummary> {
@@ -93,25 +167,17 @@ export class AudioModeService {
     if (!mode) {
       throw new UnknownAudioModeError(id);
     }
-
-    const [outputCommand, resetCommand, routeCommand] = this.buildModeCommands(mode);
-    if (!outputCommand || !resetCommand || !routeCommand) {
-      throw new Error(
-        `Invalid audio mode commands: ${JSON.stringify({
-          outputCommand,
-          resetCommand,
-          routeCommand,
-          mode
-        })}`
-      );
+    const mic = this.config.audioModes.mics[mode.mic];
+    if (!mic) {
+      throw new Error(`Audio mode ${id} names an unknown mic: ${mode.mic}`);
     }
 
+    const outputCommand = this.buildOutputCommand(mode);
     const summary = {
       id,
       name: mode.name,
       outputDeviceName: mode.outputDeviceName,
-      micInputSlot: mode.micInputSlot,
-      micRoutes: mode.micRoutes
+      mic: mode.mic
     };
     const volumePolicies = buildAudioModeVolumePolicies(this.config, mode);
 
@@ -123,10 +189,13 @@ export class AudioModeService {
       (error: unknown) => error
     );
 
+    this.pendingMode = undefined;
     let outputVerification: { attempts: number; matrixRestarted: boolean };
     try {
       outputVerification = await this.applyOutputWithRetry(mode, outputCommand);
     } catch (error) {
+      const now = Date.now();
+      this.pendingMode = { id, until: now + pendingModeTimeoutMs, nextRetryAt: now };
       const volumeError = await beforeOutputVolumePromise;
       if (volumeError) {
         this.log.warn("Pre-output volume policy failed after output switch failure", {
@@ -142,14 +211,13 @@ export class AudioModeService {
 
     await this.volumeController.apply(volumePolicies.afterOutputSwitch);
 
-    const verification = await this.applyMicRoutingWithRetry(mode, resetCommand, routeCommand);
+    const verification = await this.applyMicRoutingWithRetry(mic);
 
     this.log.info("Audio mode applied", {
       id,
       name: mode.name,
       outputDeviceName: mode.outputDeviceName,
-      micInputSlot: mode.micInputSlot,
-      micRoutes: mode.micRoutes,
+      mic: mode.mic,
       outputAttempts: outputVerification.attempts,
       matrixRestarted: outputVerification.matrixRestarted,
       routeAttempts: verification.attempts
@@ -161,32 +229,57 @@ export class AudioModeService {
     return summary;
   }
 
+  private async applyMicOnce(id: string): Promise<AudioMicSummary> {
+    const mic = this.config.audioModes.mics[id];
+    if (!mic) {
+      throw new UnknownAudioMicError(id);
+    }
+
+    const verification = await this.applyMicRoutingWithRetry(mic);
+    this.log.info("Audio mic applied", {
+      id,
+      name: mic.name,
+      inputSlot: mic.inputSlot,
+      routeAttempts: verification.attempts
+    });
+
+    const summary = { id, name: mic.name, inputSlot: mic.inputSlot };
+    void this.publisher.publishMic(id).catch((error: unknown) => {
+      this.log.warn("Could not publish applied audio mic to Home Assistant", {
+        id,
+        error: formatUnknownError(error)
+      });
+    });
+    return summary;
+  }
+
   stop(): void {
     // Mode commands use short-lived VBAN sockets.
   }
 
-  private buildModeCommands(mode: AudioModeConfig): [string, string, string] {
-    const outputCommands = [
-      `Slot(${this.config.audioModes.mainOutputSlot}).Device.WDM = "${escapeMatrixString(
-        mode.outputDeviceName
-      )}"`,
-      `Slot(${this.config.audioModes.mainOutputSlot}).Online = 1`
-    ];
+  private buildOutputCommand(mode: AudioModeConfig): string {
+    const slot = this.config.audioModes.mainOutputSlot;
+    return (
+      `Slot(${slot}).Device.${outputDriver(mode)} = "${escapeMatrixString(mode.outputDeviceName)}";` +
+      `Slot(${slot}).Online = 1;`
+    );
+  }
 
+  private buildMicCommands(mic: AudioMicConfig): { resetCommand: string; routeCommand: string } {
+    const mixSlot = this.config.audioModes.micMixOutputSlot;
     const routeCommands = [];
-    for (const route of mode.micRoutes) {
-      const point = `Point(${mode.micInputSlot}[${route.inputChannel}],${this.config.audioModes.micMixOutputSlot}.OUT[${route.outputChannel}])`;
+    for (const route of mic.routes) {
+      const point = `Point(${mic.inputSlot}[${route.inputChannel}],${mixSlot}.OUT[${route.outputChannel}])`;
       routeCommands.push(`${point}.dBGain = 0.0`);
       routeCommands.push(`${point}.Mute = 0`);
     }
 
-    return [
-      `${outputCommands.join(";")};`,
-      `Output(${this.config.audioModes.micMixOutputSlot}.OUT[${formatChannelRange(
+    return {
+      resetCommand: `Output(${mixSlot}.OUT[${formatChannelRange(
         this.config.audioModes.micOutputChannels
       )}]).Reset;`,
-      `${routeCommands.join(";")};`
-    ];
+      routeCommand: `${routeCommands.join(";")};`
+    };
   }
 
   private async publishAppliedMode(id: string, summary: AudioModeSummary): Promise<void> {
@@ -234,15 +327,18 @@ export class AudioModeService {
     outputCommand: string
   ): Promise<{ attempts: number; matrixRestarted: boolean }> {
     const attempts = Math.max(1, this.config.audioModes.outputRetryCount);
-    let actualDeviceName: string | undefined;
+    let actual: { driver?: string; name?: string } = {};
     let matrixRestarted = false;
 
     for (let attempt = 1; attempt <= attempts; attempt++) {
       await this.sendMatrixCommand(outputCommand);
       await this.delay(this.config.audioModes.engineSettleMs);
 
-      actualDeviceName = await this.queryOutputDeviceName();
-      if (isSameAudioDevice(actualDeviceName, mode.outputDeviceName)) {
+      actual = await this.queryOutputDevice();
+      if (
+        actual.driver === outputDriver(mode) &&
+        isSameAudioDevice(actual.name, mode.outputDeviceName)
+      ) {
         return { attempts: attempt, matrixRestarted };
       }
 
@@ -251,7 +347,9 @@ export class AudioModeService {
       this.log.warn("Matrix output switch did not take effect; restarting audio engine", {
         attempt,
         expectedDeviceName: mode.outputDeviceName,
-        actualDeviceName
+        expectedDriver: outputDriver(mode),
+        actualDeviceName: actual.name,
+        actualDriver: actual.driver
       });
       await this.sendMatrixCommand("Command.Restart = 1;");
       matrixRestarted = true;
@@ -259,27 +357,32 @@ export class AudioModeService {
     }
 
     throw new Error(
-      `Could not switch ${this.config.audioModes.mainOutputSlot} to "${mode.outputDeviceName}"` +
-        ` after ${attempts} attempt(s); Matrix reports "${actualDeviceName ?? "no response"}"`
+      `Could not switch ${this.config.audioModes.mainOutputSlot} to ${outputDriver(mode)} "${mode.outputDeviceName}"` +
+        ` after ${attempts} attempt(s); Matrix reports ${
+          actual.name === undefined
+            ? "no response"
+            : `${actual.driver ?? "no driver"} "${actual.name}"`
+        }. RWU retries for ${pendingModeTimeoutMs / 1000} s whenever Windows shows the device.`
     );
   }
 
-  private async queryOutputDeviceName(): Promise<string | undefined> {
-    const command = `Slot(${this.config.audioModes.mainOutputSlot}).Device.WDM = ?;`;
+  private async queryOutputDevice(): Promise<{ driver?: string; name?: string }> {
+    const command = `Slot(${this.config.audioModes.mainOutputSlot}).Device = ?;`;
     const client = this.createMatrixClient();
     try {
       const responses = await client.request(command, 500);
-      return parseStringResponse(responses.find((response) => response.includes(".Device.WDM")));
+      const response = responses.find((candidate) => candidate.includes(".Device"));
+      return {
+        driver: response?.match(/\.Device\.(\w+)\s*=/)?.[1],
+        name: parseStringResponse(response)
+      };
     } finally {
       await client.close();
     }
   }
 
-  private async applyMicRoutingWithRetry(
-    mode: AudioModeConfig,
-    resetCommand: string,
-    routeCommand: string
-  ): Promise<{ attempts: number }> {
+  private async applyMicRoutingWithRetry(mic: AudioMicConfig): Promise<{ attempts: number }> {
+    const { resetCommand, routeCommand } = this.buildMicCommands(mic);
     const attempts = Math.max(1, this.config.audioModes.routeRetryCount);
     let lastFailure: MatrixRouteVerification | undefined;
 
@@ -289,10 +392,10 @@ export class AudioModeService {
       await this.sendMatrixCommand(routeCommand);
       await this.delay(this.config.audioModes.routeRetryDelayMs);
 
-      const verification = await this.verifyMicRouting(mode);
+      const verification = await this.verifyMicRouting(mic);
       if (verification.ok) {
         if (attempt > 1) {
-          this.log.info("Mic route verified after retry", { attempt, mode: mode.name });
+          this.log.info("Mic route verified after retry", { attempt, mic: mic.name });
         }
         return { attempts: attempt };
       }
@@ -300,18 +403,18 @@ export class AudioModeService {
       lastFailure = verification;
       this.log.warn("Mic route verification failed; retrying", {
         attempt,
-        mode: mode.name,
+        mic: mic.name,
         failures: verification.failures
       });
     }
 
     throw new Error(
-      `Could not verify mic route for ${mode.name}: ${JSON.stringify(lastFailure?.failures ?? [])}`
+      `Could not verify mic route for ${mic.name}: ${JSON.stringify(lastFailure?.failures ?? [])}`
     );
   }
 
-  private async verifyMicRouting(mode: AudioModeConfig): Promise<MatrixRouteVerification> {
-    const expected = new Set(mode.micRoutes.map((route) => routeKey(mode.micInputSlot, route)));
+  private async verifyMicRouting(mic: AudioMicConfig): Promise<MatrixRouteVerification> {
+    const expected = new Set(mic.routes.map((route) => routeKey(mic.inputSlot, route)));
     const failures: string[] = [];
 
     for (const candidate of this.getKnownMicRouteCandidates()) {
@@ -343,11 +446,11 @@ export class AudioModeService {
 
   private getKnownMicRouteCandidates(): MicRouteCandidate[] {
     const inputPoints = new Map<string, { inputSlot: string; inputChannel: number }>();
-    for (const mode of Object.values(this.config.audioModes.modes)) {
-      for (const route of mode.micRoutes) {
-        const key = `${mode.micInputSlot}[${route.inputChannel}]`;
+    for (const mic of Object.values(this.config.audioModes.mics)) {
+      for (const route of mic.routes) {
+        const key = `${mic.inputSlot}[${route.inputChannel}]`;
         inputPoints.set(key, {
-          inputSlot: mode.micInputSlot,
+          inputSlot: mic.inputSlot,
           inputChannel: route.inputChannel
         });
       }
@@ -388,6 +491,15 @@ export class UnknownAudioModeError extends Error {
   }
 }
 
+export class UnknownAudioMicError extends Error {
+  readonly id: string;
+
+  constructor(id: string) {
+    super(`Unknown audio mic: ${id}`);
+    this.id = id;
+  }
+}
+
 // The part in brackets is the driver device name, including the "2-" index that
 // tells two identical adapters apart. The text before it is a user-editable label.
 export function isSameAudioDevice(actual: string | undefined, expected: string): boolean {
@@ -402,7 +514,21 @@ function audioDeviceName(endpointName: string): string | undefined {
   return endpointName.match(/\(([^()]+)\)\s*$/)?.[1]?.trim().toLowerCase();
 }
 
-function escapeMatrixString(value: string): string {
+export function isAudioDevicePresent(
+  endpointNames: string[],
+  matrixDeviceName: string,
+  driver = "WDM"
+): boolean {
+  return endpointNames.some((name) =>
+    driver === "MME" ? name.startsWith(matrixDeviceName) : isSameAudioDevice(name, matrixDeviceName)
+  );
+}
+
+function outputDriver(mode: AudioModeConfig): string {
+  return mode.outputDriver ?? "WDM";
+}
+
+export function escapeMatrixString(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
 

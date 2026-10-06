@@ -9,13 +9,23 @@ export interface AudioEndpointState {
 }
 
 export interface AudioWatcherMessage {
-  type: "ready" | "endpoint" | "snapshot" | "error" | "volume-policy-result";
+  type:
+    | "ready"
+    | "endpoint"
+    | "snapshot"
+    | "error"
+    | "volume-policy-result"
+    | "default-device-reset";
   endpoints?: AudioEndpointState[];
   endpoint?: AudioEndpointState;
   message?: string;
   error?: string;
   requestId?: string;
   results?: AudioEndpointVolumePolicyResult[];
+  flow?: string;
+  role?: string;
+  from?: string;
+  to?: string;
 }
 
 export interface AudioEndpointVolumePolicyResult {

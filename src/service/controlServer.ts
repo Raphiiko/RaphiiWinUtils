@@ -8,7 +8,11 @@ import { wallpaperRoutes } from "../wallpaper/wallpaperRoutes.ts";
 import { WallpaperService } from "../wallpaper/wallpaperService.ts";
 import { FileAudioMqttStateStore } from "../mqtt/audioMqttStateStore.ts";
 import { Logger } from "../system/logger.ts";
-import { AudioModeService, UnknownAudioModeError } from "./audioModeService.ts";
+import {
+  AudioModeService,
+  UnknownAudioMicError,
+  UnknownAudioModeError
+} from "./audioModeService.ts";
 import {
   ChannelVolumeService,
   InvalidAudioVolumeError,
@@ -120,12 +124,17 @@ export class ControlServer {
           })
         }
       )
-      .get("/audio/modes", async () => ({
-        modes: this.audioModes.listModes(),
-        // The confirmed mode is persisted by the MQTT sync; reading the same file keeps the
-        // dashboard honest without new plumbing.
-        active: (await new FileAudioMqttStateStore().load()).mode ?? null
-      }))
+      .get("/audio/modes", async () => {
+        // The confirmed mode and mic are persisted by the MQTT sync; reading the same file keeps
+        // the dashboard honest without new plumbing.
+        const saved = await new FileAudioMqttStateStore().load();
+        return {
+          modes: this.audioModes.listModes(),
+          active: saved.mode ?? null,
+          mics: this.audioModes.listMics(),
+          activeMic: saved.mic ?? null
+        };
+      })
       .get("/audio/volumes", () => ({
         channels: this.channelVolumes.listStates().map((state) => ({
           name: state.channelName,
@@ -200,6 +209,20 @@ export class ControlServer {
             applied: false,
             error: "Failed to apply audio mode"
           };
+        }
+      })
+      .post("/audio/mics/:id", async ({ params, set }) => {
+        try {
+          return { applied: true, mic: await this.audioModes.applyMic(params.id) };
+        } catch (error) {
+          if (error instanceof UnknownAudioMicError) {
+            set.status = 404;
+            return { applied: false, error: error.message };
+          }
+
+          set.status = 500;
+          this.log.error("Failed to apply audio mic", { error: String(error) });
+          return { applied: false, error: "Failed to apply audio mic" };
         }
       })
       .post("/audio/volumes/:name", async ({ params, body, set }) => {

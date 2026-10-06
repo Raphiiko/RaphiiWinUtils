@@ -37,7 +37,13 @@
         "endpointNameContains": "Game Audio",
         "presetPatch": 5
       }
-    ]
+    ],
+    "lockedDefaultDevices": {
+      "playback": "System Audio (VB-Audio Matrix VAIO)",
+      "communicationsPlayback": "Voice Audio (VB-Audio Matrix VAIO)",
+      "recording": "Microphone Mix (VB-Audio Matrix VAIO)",
+      "communicationsRecording": "Microphone Mix (VB-Audio Matrix VAIO)"
+    }
   },
   "audioModes": {
     "mainOutputSlot": "WIN1.OUT",
@@ -48,62 +54,111 @@
     "outputRetryCount": 2,
     "routeRetryCount": 5,
     "routeRetryDelayMs": 500,
+    "slotRecoveryPollMs": 2000,
     "modes": {
-      "headset-desk-mic": {
-        "name": "Headset + Desk Mic",
-        "outputDeviceName": "Headset (3- Arctis Nova Pro Wireless)",
-        "micInputSlot": "WIN1.IN",
-        "micRoutes": [
-          { "inputChannel": 1, "outputChannel": 1 },
-          { "inputChannel": 1, "outputChannel": 2 }
-        ]
-      },
       "beyond": {
         "name": "Beyond",
         "outputDeviceName": "Bigscreen Beyond (USB-C to 3.5mm Headphone Jack Adapter)",
-        "micInputSlot": "WIN3.IN",
+        "mic": "beyond",
         "channelVolumeOverrides": {
           "Game": 100
-        },
-        "micRoutes": [
-          { "inputChannel": 1, "outputChannel": 1 },
-          { "inputChannel": 2, "outputChannel": 2 }
-        ]
+        }
       },
       "headset": {
         "name": "Headset",
         "outputDeviceName": "Headset (3- Arctis Nova Pro Wireless)",
-        "micInputSlot": "WIN2.IN",
-        "micRoutes": [
-          { "inputChannel": 1, "outputChannel": 1 },
-          { "inputChannel": 2, "outputChannel": 2 }
-        ]
+        "mic": "headset"
       },
       "iems": {
         "name": "IEMs",
         "outputDeviceName": "Headphones (2- USB-C to 3.5mm Headphone Jack Adapter)",
-        "micInputSlot": "WIN1.IN",
-        "micRoutes": [
-          { "inputChannel": 1, "outputChannel": 1 },
-          { "inputChannel": 1, "outputChannel": 2 }
-        ]
+        "mic": "desktop"
       },
       "desk-speakers": {
         "name": "Desk Speakers",
         "outputDeviceName": "Desktop Speakers (USB SPDIF Adapter)",
-        "micInputSlot": "WIN1.IN",
-        "micRoutes": [
-          { "inputChannel": 1, "outputChannel": 1 },
-          { "inputChannel": 1, "outputChannel": 2 }
-        ]
+        "mic": "desktop"
       },
       "tws": {
         "name": "TWS",
         "outputDeviceName": "Headphones (Nothing Ear (a))",
-        "micInputSlot": "WIN1.IN",
-        "micRoutes": [
-          { "inputChannel": 1, "outputChannel": 1 },
-          { "inputChannel": 1, "outputChannel": 2 }
+        "mic": "desktop"
+      },
+      "steam-link": {
+        "name": "Steam Link",
+        "outputDeviceName": "Steam Link (Steam Streaming Speakers)",
+        "mic": "steam"
+      }
+    },
+    "mics": {
+      "desktop": {
+        "name": "Desk",
+        "inputSlot": "WIN1.IN",
+        "routes": [
+          {
+            "inputChannel": 1,
+            "outputChannel": 1
+          },
+          {
+            "inputChannel": 1,
+            "outputChannel": 2
+          }
+        ]
+      },
+      "headset": {
+        "name": "Headset",
+        "inputSlot": "WIN2.IN",
+        "routes": [
+          {
+            "inputChannel": 1,
+            "outputChannel": 1
+          },
+          {
+            "inputChannel": 2,
+            "outputChannel": 2
+          }
+        ]
+      },
+      "lav": {
+        "name": "Lav",
+        "inputSlot": "WIN7.IN",
+        "routes": [
+          {
+            "inputChannel": 1,
+            "outputChannel": 1
+          },
+          {
+            "inputChannel": 2,
+            "outputChannel": 2
+          }
+        ]
+      },
+      "steam": {
+        "name": "Steam",
+        "inputSlot": "WIN4.IN",
+        "routes": [
+          {
+            "inputChannel": 1,
+            "outputChannel": 1
+          },
+          {
+            "inputChannel": 2,
+            "outputChannel": 2
+          }
+        ]
+      },
+      "beyond": {
+        "name": "Beyond",
+        "inputSlot": "WIN3.IN",
+        "routes": [
+          {
+            "inputChannel": 1,
+            "outputChannel": 1
+          },
+          {
+            "inputChannel": 2,
+            "outputChannel": 2
+          }
         ]
       }
     }

@@ -5,6 +5,7 @@ import { getConfigPath } from "../config/loadConfig.ts";
 
 export interface AudioMqttState {
   mode?: string;
+  mic?: string;
   channelVolumes: Record<string, number>;
 }
 
@@ -21,6 +22,7 @@ export class FileAudioMqttStateStore implements AudioMqttStateStore {
     const value = JSON.parse(await readFile(this.path, "utf8")) as Partial<AudioMqttState>;
     return {
       mode: typeof value.mode === "string" ? value.mode : undefined,
+      mic: typeof value.mic === "string" ? value.mic : undefined,
       channelVolumes: value.channelVolumes ?? {}
     };
   }

@@ -21,6 +21,8 @@ import {
 interface AudioModeController {
   listModes(): AudioModeSummary[];
   applyMode(id: string): Promise<AudioModeSummary>;
+  listMics(): Array<{ id: string }>;
+  applyMic(id: string): Promise<unknown>;
 }
 
 export interface MqttAudioSyncDependencies {
@@ -115,8 +117,18 @@ export class MqttAudioSyncService implements AudioModePublisher {
     if (!this.isConfigured() || this.stopped) return;
     await this.ensureStateReady();
     this.state.mode = mode.id;
+    this.state.mic = mode.mic;
     await this.persistState();
     await this.publishModeState(mode.id);
+    await this.publishMicState(mode.mic);
+  }
+
+  async publishMic(micId: string): Promise<void> {
+    if (!this.isConfigured() || this.stopped) return;
+    await this.ensureStateReady();
+    this.state.mic = micId;
+    await this.persistState();
+    await this.publishMicState(micId);
   }
 
   private async loadStateAndConnect(): Promise<void> {
@@ -160,6 +172,7 @@ export class MqttAudioSyncService implements AudioModePublisher {
   private async onConnected(): Promise<void> {
     this.log.info("Connected to MQTT broker", { host: this.config.host, port: this.config.port });
     await this.subscribe(this.topic("audio/mode/set"));
+    await this.subscribe(this.topic("audio/mic/set"));
     await Promise.all(
       vrRecoveryButtons.map((button) => this.subscribe(this.topic(button.commandTopicSuffix)))
     );
@@ -206,6 +219,20 @@ export class MqttAudioSyncService implements AudioModePublisher {
         await this.publishMode(mode);
       } catch (error) {
         this.log.error("Could not apply MQTT audio mode", { modeId, error: formatError(error) });
+      }
+      return;
+    }
+    if (topic === this.topic("audio/mic/set")) {
+      const micId = payload.trim();
+      if (!this.audioModes.listMics().some((mic) => mic.id === micId)) {
+        this.log.warn("Ignoring unknown MQTT audio mic", { micId });
+        return;
+      }
+      try {
+        await this.audioModes.applyMic(micId);
+        await this.publishMic(micId);
+      } catch (error) {
+        this.log.error("Could not apply MQTT audio mic", { micId, error: formatError(error) });
       }
       return;
     }
@@ -321,6 +348,7 @@ export class MqttAudioSyncService implements AudioModePublisher {
 
   private async publishAllState(): Promise<void> {
     if (this.state.mode) await this.publishModeState(this.state.mode);
+    if (this.state.mic) await this.publishMicState(this.state.mic);
     await Promise.all(
       Object.entries(this.state.channelVolumes).map(([channel, value]) =>
         this.publishChannelState(channel, value)
@@ -336,6 +364,10 @@ export class MqttAudioSyncService implements AudioModePublisher {
 
   private async publishModeState(modeId: string): Promise<void> {
     await this.publish(this.topic("audio/mode/state"), modeId, true);
+  }
+
+  private async publishMicState(micId: string): Promise<void> {
+    await this.publish(this.topic("audio/mic/state"), micId, true);
   }
 
   private async publishChannelState(channel: string, value: number): Promise<void> {
@@ -369,6 +401,22 @@ export class MqttAudioSyncService implements AudioModePublisher {
         command_topic: this.topic("audio/mode/set"),
         state_topic: this.topic("audio/mode/state"),
         options: this.audioModes.listModes().map((mode) => mode.id),
+        retain: true,
+        qos: 1,
+        availability,
+        device
+      }),
+      true
+    );
+    await this.publish(
+      `${prefix}/select/${deviceId}/audio_mic/config`,
+      JSON.stringify({
+        name: "Audio mic",
+        unique_id: `${deviceId}_audio_mic`,
+        object_id: "shirakami_audio_mic",
+        command_topic: this.topic("audio/mic/set"),
+        state_topic: this.topic("audio/mic/state"),
+        options: this.audioModes.listMics().map((mic) => mic.id),
         retain: true,
         qos: 1,
         availability,

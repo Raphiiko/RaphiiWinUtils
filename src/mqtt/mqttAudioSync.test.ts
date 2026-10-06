@@ -12,17 +12,18 @@ const deskSpeakers: AudioModeSummary = {
   id: "desk-speakers",
   name: "Desk Speakers",
   outputDeviceName: "Desktop Speakers",
-  micInputSlot: "WIN1.IN",
-  micRoutes: []
+  mic: "desktop"
 };
 
+const noMics = { listMics: () => [], applyMic: () => Promise.resolve() };
+
 const allAudioModes = [
-  { id: "headset-desk-mic", name: "Headset + Desk Mic" },
   { id: "beyond", name: "Beyond" },
   { id: "headset", name: "Headset" },
   { id: "iems", name: "IEMs" },
   { id: "desk-speakers", name: "Desk Speakers" },
-  { id: "tws", name: "TWS" }
+  { id: "tws", name: "TWS" },
+  { id: "steam-link", name: "Steam Link" }
 ].map(({ id, name }) => ({ ...deskSpeakers, id, name }));
 
 const logger = {
@@ -41,6 +42,7 @@ void test("publishes discovery and only confirms an MQTT mode after the local co
   const service = new MqttAudioSyncService(
     { ...defaultConfig.mqtt, enabled: true, password: "test-password" },
     {
+      ...noMics,
       listModes: () => allAudioModes,
       applyMode: (id) => {
         modesApplied.push(id);
@@ -62,12 +64,12 @@ void test("publishes discovery and only confirms an MQTT mode after the local co
     client.published.find((message) => message.topic.endsWith("audio_mode/config"))?.payload ?? "{}"
   ) as { options?: string[] };
   assert.deepEqual(discovery.options, [
-    "headset-desk-mic",
     "beyond",
     "headset",
     "iems",
     "desk-speakers",
-    "tws"
+    "tws",
+    "steam-link"
   ]);
 
   assert.equal(
@@ -106,7 +108,7 @@ void test("publishes VR recovery buttons and routes their presses through the sh
   const reported: string[] = [];
   const service = new MqttAudioSyncService(
     { ...defaultConfig.mqtt, enabled: true, password: "test-password" },
-    { listModes: () => [deskSpeakers], applyMode: () => Promise.resolve(deskSpeakers) },
+    { ...noMics, listModes: () => [deskSpeakers], applyMode: () => Promise.resolve(deskSpeakers) },
     createChannels() as unknown as ChannelVolumeService,
     logger,
     { connect: () => client as unknown as MqttClient, stateStore: new MemoryStateStore() },
@@ -207,12 +209,13 @@ void test("publishes VR recovery buttons and routes their presses through the sh
     Buffer.from('{"operationId":"soft-1","phase":"setting-audio-mode","state":"active"}'),
     { retain: false }
   );
-  await waitFor(() =>
-    recoverCalls === 1 &&
-    startCalls === 1 &&
-    hardRecoverCalls === 1 &&
-    prepared.length === 1 &&
-    reported.length === 1
+  await waitFor(
+    () =>
+      recoverCalls === 1 &&
+      startCalls === 1 &&
+      hardRecoverCalls === 1 &&
+      prepared.length === 1 &&
+      reported.length === 1
   );
   assert.deepEqual(prepared, ["soft-recover:soft-1"]);
   assert.deepEqual(reported, ["soft-1:setting-audio-mode:active"]);
@@ -224,7 +227,7 @@ void test("does not replay retained MQTT VRChat button presses", async () => {
   let recoverCalls = 0;
   const service = new MqttAudioSyncService(
     { ...defaultConfig.mqtt, enabled: true, password: "test-password" },
-    { listModes: () => [deskSpeakers], applyMode: () => Promise.resolve(deskSpeakers) },
+    { ...noMics, listModes: () => [deskSpeakers], applyMode: () => Promise.resolve(deskSpeakers) },
     createChannels() as unknown as ChannelVolumeService,
     logger,
     { connect: () => client as unknown as MqttClient, stateStore: new MemoryStateStore() },

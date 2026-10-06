@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -14,7 +15,7 @@ if (TryParseVolumePolicies(args, out var volumePolicies))
 var resyncMs = ParseResyncMs(args);
 try
 {
-    using var watcher = new EndpointWatcher(resyncMs);
+    using var watcher = new EndpointWatcher(resyncMs, ParseLockedDefaults(args));
     watcher.Run();
 }
 catch (Exception ex)
@@ -108,6 +109,21 @@ static void ApplyVolumePolicies(IReadOnlyCollection<VolumePolicy> policies)
     foreach (var device in devices) device.Dispose();
 }
 
+static LockedDefault[] ParseLockedDefaults(string[] args)
+{
+    const string prefix = "--locked-defaults-base64=";
+    var argument = args.FirstOrDefault(arg =>
+        arg.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+    if (argument is null) return [];
+
+    var json = Encoding.UTF8.GetString(Convert.FromBase64String(argument[prefix.Length..]));
+    return JsonSerializer.Deserialize<LockedDefault[]>(json, new JsonSerializerOptions
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter() }
+    }) ?? [];
+}
+
 static int ParseResyncMs(string[] args)
 {
     foreach (var arg in args)
@@ -139,6 +155,8 @@ internal sealed class EndpointWatcher : IDisposable
     private const int DeviceChangeDebounceMs = 500;
 
     private readonly int resyncMs;
+    private readonly LockedDefault[] lockedDefaults;
+    private readonly HashSet<LockedDefault> reportedMissingDefaults = [];
     private readonly MMDeviceEnumerator enumerator = new();
     private readonly ConcurrentDictionary<string, EndpointSubscription> subscriptions = new();
     private readonly EndpointNotificationClient notificationClient;
@@ -149,9 +167,10 @@ internal sealed class EndpointWatcher : IDisposable
     private readonly ManualResetEventSlim stopEvent = new(false);
     private bool disposed;
 
-    public EndpointWatcher(int resyncMs)
+    public EndpointWatcher(int resyncMs, LockedDefault[] lockedDefaults)
     {
         this.resyncMs = resyncMs;
+        this.lockedDefaults = lockedDefaults;
         notificationClient = new EndpointNotificationClient(QueueDeviceSnapshot);
         resyncTimer = new Timer(_ => SafeSnapshot("resync"), null, Timeout.Infinite, Timeout.Infinite);
         deviceChangeTimer = new Timer(_ => SafeSnapshot("device-event"), null, Timeout.Infinite, Timeout.Infinite);
@@ -362,6 +381,7 @@ internal sealed class EndpointWatcher : IDisposable
             lock (snapshotLock)
             {
                 if (disposed) return;
+                EnforceLockedDefaults();
                 var devices = EnumerateRenderDevices();
                 SafeSubscribeAll(devices);
                 endpoints = devices
@@ -378,6 +398,63 @@ internal sealed class EndpointWatcher : IDisposable
         catch (Exception ex)
         {
             Write(new { type = "error", message = ex.ToString() });
+        }
+    }
+
+    private void EnforceLockedDefaults()
+    {
+        foreach (var locked in lockedDefaults)
+        {
+            try
+            {
+                string? currentName = null;
+                try
+                {
+                    using var current = enumerator.GetDefaultAudioEndpoint(locked.Flow, locked.Role);
+                    if (current.FriendlyName.Equals(locked.DeviceName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        reportedMissingDefaults.Remove(locked);
+                        continue;
+                    }
+                    currentName = current.FriendlyName;
+                }
+                catch (COMException)
+                {
+                    // Windows has no default for this role yet.
+                }
+
+                var devices = enumerator.EnumerateAudioEndPoints(locked.Flow, DeviceState.Active).ToArray();
+                var target = devices.FirstOrDefault(device =>
+                    device.FriendlyName.Equals(locked.DeviceName, StringComparison.OrdinalIgnoreCase));
+                try
+                {
+                    if (target is null)
+                    {
+                        if (reportedMissingDefaults.Add(locked))
+                            Write(new { type = "error", message = $"Locked default device not found: {locked.DeviceName}" });
+                        continue;
+                    }
+
+                    PolicyConfig.SetDefaultEndpoint(target.ID, locked.Role);
+                    reportedMissingDefaults.Remove(locked);
+                    Write(new
+                    {
+                        type = "default-device-reset",
+                        flow = locked.Flow.ToString(),
+                        role = locked.Role.ToString(),
+                        from = currentName,
+                        to = locked.DeviceName
+                    });
+                }
+                finally
+                {
+                    foreach (var device in devices) device.Dispose();
+                }
+            }
+            catch (Exception ex)
+            {
+                Write(new { type = "error", message = $"Could not lock default device {locked.DeviceName}: {ex.Message}" });
+            }
         }
     }
 
@@ -424,7 +501,7 @@ internal sealed class EndpointNotificationClient : IMMNotificationClient
 
     public void OnDefaultDeviceChanged(DataFlow flow, Role role, string defaultDeviceId)
     {
-        if (flow == DataFlow.Render || flow == DataFlow.All) onDeviceChanged();
+        onDeviceChanged();
     }
 
     public void OnPropertyValueChanged(string pwstrDeviceId, PropertyKey key)
@@ -490,6 +567,45 @@ internal sealed record EndpointState(
             (int)Math.Round(scalar * 100),
             data.Muted,
             source);
+    }
+}
+
+internal sealed record LockedDefault(DataFlow Flow, Role Role, string DeviceName);
+
+// Windows has no public API to change the default device; the Sound panel uses this interface.
+internal static class PolicyConfig
+{
+    public static void SetDefaultEndpoint(string deviceId, Role role)
+    {
+        var config = (IPolicyConfig)new PolicyConfigClient();
+        try
+        {
+            Marshal.ThrowExceptionForHR(config.SetDefaultEndpoint(deviceId, role));
+        }
+        finally
+        {
+            Marshal.ReleaseComObject(config);
+        }
+    }
+
+    [ComImport, Guid("870af99c-171d-4f9e-af0d-e63df40c2bc9")]
+    private class PolicyConfigClient;
+
+    [ComImport, Guid("f8679f50-850a-41cf-9c72-430f290290c8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IPolicyConfig
+    {
+        // Vtable order matters: the unused methods only hold their slots.
+        [PreserveSig] int GetMixFormat();
+        [PreserveSig] int GetDeviceFormat();
+        [PreserveSig] int ResetDeviceFormat();
+        [PreserveSig] int SetDeviceFormat();
+        [PreserveSig] int GetProcessingPeriod();
+        [PreserveSig] int SetProcessingPeriod();
+        [PreserveSig] int GetShareMode();
+        [PreserveSig] int SetShareMode();
+        [PreserveSig] int GetPropertyValue();
+        [PreserveSig] int SetPropertyValue();
+        [PreserveSig] int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string deviceId, Role role);
     }
 }
 

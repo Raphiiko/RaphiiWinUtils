@@ -26,7 +26,8 @@ void test("accepts a renamed endpoint label but not a different device", () => {
 });
 
 const publisher: AudioModePublisher = {
-  publishMode: () => Promise.resolve()
+  publishMode: () => Promise.resolve(),
+  publishMic: () => Promise.resolve()
 };
 
 const logger = {
@@ -66,7 +67,7 @@ void test("fails instead of reporting success when Matrix still cannot select th
 
   await assert.rejects(
     service.applyMode("tws"),
-    /Could not switch WIN1\.OUT to "Nothing Ear" after 2 attempt\(s\)/
+    /Could not switch WIN1\.OUT to WDM "Nothing Ear" after 2 attempt\(s\)/
   );
 });
 
@@ -139,10 +140,70 @@ void test("skips a pre-switch volume helper call when the endpoint watcher confi
   assert.deepEqual(volumeController.batches, [[], []]);
 });
 
+void test("switches a WDM output to the same device through MME", async () => {
+  const matrix = new FakeMatrixClient("Nothing Ear");
+  const service = createService(matrix, { outputDriver: "MME" });
+
+  await service.applyMode("tws");
+
+  assert.equal(matrix.currentDriver, "MME");
+  assert.ok(
+    matrix.commands.includes('Slot(WIN1.OUT).Device.MME = "Nothing Ear";Slot(WIN1.OUT).Online = 1;')
+  );
+  assert.equal(matrix.commands.includes("Command.Restart = 1;"), false);
+});
+
+void test("applies a failed mode once its output appears in Windows, but not after a minute", async () => {
+  const matrix = new FakeMatrixClient("Desktop Speakers", true, false);
+  const service = createService(matrix);
+  await assert.rejects(service.applyMode("tws"));
+
+  await service.retryPendingMode(["Desktop Speakers"]);
+  assert.equal(matrix.outputAssignmentAttempts, 2);
+
+  matrix.cacheRefreshed = true;
+  await service.retryPendingMode(["Nothing Ear"], Date.now() + 61_000);
+  assert.equal(matrix.outputAssignmentAttempts, 2);
+
+  matrix.cacheRefreshed = false;
+  await assert.rejects(service.applyMode("tws"));
+  matrix.cacheRefreshed = true;
+  await service.retryPendingMode(["Nothing Ear"]);
+  assert.equal(matrix.currentDeviceName, "Nothing Ear");
+});
+
+void test("switches only the mic, and a mode switches back to its preferred mic", async () => {
+  const matrix = new FakeMatrixClient("Desktop Speakers");
+  const published: string[] = [];
+  const service = createService(matrix, {
+    publisher: {
+      publishMode: (mode) => Promise.resolve(void published.push(`mode:${mode.id}:${mode.mic}`)),
+      publishMic: (id) => Promise.resolve(void published.push(`mic:${id}`))
+    }
+  });
+  const desktop = "Point(WIN1.IN[1],VAIO1.OUT[1])";
+  const lav = "Point(WIN7.IN[1],VAIO1.OUT[1])";
+
+  await service.applyMode("tws");
+  assert.deepEqual([...matrix.routedPoints], [desktop]);
+
+  const outputCommands = matrix.outputAssignmentAttempts;
+  await service.applyMic("lav");
+  assert.deepEqual([...matrix.routedPoints], [lav]);
+  assert.equal(matrix.outputAssignmentAttempts, outputCommands);
+
+  await service.applyMode("tws");
+  assert.deepEqual([...matrix.routedPoints], [desktop]);
+  await Promise.resolve();
+  assert.deepEqual(published, ["mode:tws:desktop", "mic:lav", "mode:tws:desktop"]);
+  await assert.rejects(service.applyMic("nope"), /Unknown audio mic: nope/);
+});
+
 function createService(
   matrix: FakeMatrixClient,
   options: {
     channelVolumeOverrides?: Record<string, number>;
+    outputDriver?: "WDM" | "MME";
     volumeController?: AudioEndpointVolumeController;
     publisher?: AudioModePublisher;
     filterPreOutputVolumePolicies?: (
@@ -156,13 +217,21 @@ function createService(
   config.audioModes.routeRetryCount = 1;
   config.audioModes.outputRetryCount = 2;
   config.audioModes.micOutputChannels = [1];
+  config.audioModes.mics = {
+    desktop: {
+      name: "Desk Mic",
+      inputSlot: "WIN1.IN",
+      routes: [{ inputChannel: 1, outputChannel: 1 }]
+    },
+    lav: { name: "Lav", inputSlot: "WIN7.IN", routes: [{ inputChannel: 1, outputChannel: 1 }] }
+  };
   config.audioModes.modes = {
     tws: {
       name: "TWS",
       outputDeviceName: "Nothing Ear",
-      micInputSlot: "WIN1.IN",
-      micRoutes: [{ inputChannel: 1, outputChannel: 1 }],
-      channelVolumeOverrides: options.channelVolumeOverrides
+      mic: "desktop",
+      channelVolumeOverrides: options.channelVolumeOverrides,
+      outputDriver: options.outputDriver
     }
   };
 
@@ -216,6 +285,10 @@ class DeferredPublisher implements AudioModePublisher {
     });
   }
 
+  publishMic(): Promise<void> {
+    return Promise.resolve();
+  }
+
   resolve(): void {
     this.resolvePublish?.();
   }
@@ -223,9 +296,11 @@ class DeferredPublisher implements AudioModePublisher {
 
 class FakeMatrixClient {
   readonly commands: string[] = [];
+  readonly routedPoints = new Set<string>();
   currentDeviceName: string;
+  currentDriver = "WDM";
   outputAssignmentAttempts = 0;
-  private cacheRefreshed: boolean;
+  cacheRefreshed: boolean;
   private readonly refreshOnRestart: boolean;
   private readonly onSend?: (command: string) => void;
 
@@ -250,24 +325,33 @@ class FakeMatrixClient {
       return Promise.resolve();
     }
 
-    const outputMatch = command.match(/Slot\(WIN1\.OUT\)\.Device\.WDM = "([^"]+)"/);
-    if (outputMatch?.[1]) {
+    if (command.includes(").Reset;")) this.routedPoints.clear();
+    for (const match of command.matchAll(/(Point\([^)]+\))\.dBGain = 0\.0/g)) {
+      if (match[1]) this.routedPoints.add(match[1]);
+    }
+
+    const outputMatch = command.match(/Slot\(WIN1\.OUT\)\.Device\.(\w+) = "([^"]+)"/);
+    if (outputMatch?.[1] && outputMatch[2]) {
       this.outputAssignmentAttempts++;
-      if (this.cacheRefreshed) this.currentDeviceName = outputMatch[1];
+      if (this.cacheRefreshed) {
+        this.currentDriver = outputMatch[1];
+        this.currentDeviceName = outputMatch[2];
+      }
     }
 
     return Promise.resolve();
   }
 
   request(command: string): Promise<string[]> {
-    if (command.includes(".Device.WDM")) {
+    if (command.includes(".Device = ?")) {
       return Promise.resolve([
-        `Slot(WIN1.OUT).Device.WDM = ${JSON.stringify(this.currentDeviceName)};`
+        `Slot(WIN1.OUT).Device.${this.currentDriver} = ${JSON.stringify(this.currentDeviceName)};`
       ]);
     }
 
-    if (command.includes(".dBGain")) {
-      return Promise.resolve([`${command.replace("?", "0.0")}`]);
+    const point = command.match(/^(Point\([^)]+\))\.dBGain/)?.[1];
+    if (point) {
+      return Promise.resolve([command.replace("?", this.routedPoints.has(point) ? "0.0" : "-inf")]);
     }
 
     return Promise.resolve([]);

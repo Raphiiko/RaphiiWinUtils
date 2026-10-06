@@ -1,7 +1,8 @@
 import type { AudioModeConfig } from "./schema.ts";
 
 const legacyAudioModeIds: Record<string, string> = {
-  "desk-mic": "headset-desk-mic",
+  "desk-mic": "headset",
+  "headset-desk-mic": "headset",
   iem: "iems",
   speaker: "desk-speakers"
 };

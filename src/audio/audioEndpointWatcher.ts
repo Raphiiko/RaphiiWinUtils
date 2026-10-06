@@ -6,6 +6,7 @@ import type {
   AudioEndpointVolumePolicyResult,
   AudioWatcherMessage
 } from "./types.ts";
+import type { LockedDefaultDevicesConfig } from "../config/schema.ts";
 import { getHelperPath } from "../system/paths.ts";
 import { Logger } from "../system/logger.ts";
 
@@ -26,9 +27,15 @@ export class AudioEndpointWatcher {
   >();
   private readonly log: Logger;
   private readonly endpointResyncMs: number;
+  private readonly lockedDefaultDevices: LockedDefaultDevicesConfig;
 
-  constructor(endpointResyncMs: number, logger: Logger) {
+  constructor(
+    endpointResyncMs: number,
+    lockedDefaultDevices: LockedDefaultDevicesConfig,
+    logger: Logger
+  ) {
     this.endpointResyncMs = endpointResyncMs;
+    this.lockedDefaultDevices = lockedDefaultDevices;
     this.log = logger.child("audio");
   }
 
@@ -113,7 +120,14 @@ export class AudioEndpointWatcher {
         }
 
         buffer = "";
-        const child = spawn(helperPath, [`--resync-ms=${this.endpointResyncMs}`], {
+        const lockedDefaults = Buffer.from(
+          JSON.stringify(lockedDefaultRoles(this.lockedDefaultDevices))
+        ).toString("base64");
+        const args = [
+          `--resync-ms=${this.endpointResyncMs}`,
+          `--locked-defaults-base64=${lockedDefaults}`
+        ];
+        const child = spawn(helperPath, args, {
           windowsHide: true,
           stdio: ["pipe", "pipe", "pipe"]
         });
@@ -143,6 +157,13 @@ export class AudioEndpointWatcher {
                 publishSnapshot(message.endpoints);
               } else if (message.type === "endpoint" && message.endpoint) {
                 publishEndpoint(message.endpoint);
+              } else if (message.type === "default-device-reset") {
+                this.log.info("Windows default device changed; set it back", {
+                  flow: message.flow,
+                  role: message.role,
+                  from: message.from,
+                  to: message.to
+                });
               } else if (message.type === "error") {
                 this.log.warn("Audio watcher reported an error", { message: message.message });
               }
@@ -228,6 +249,20 @@ export class AudioEndpointWatcher {
     }
     this.pendingVolumeRequests.clear();
   }
+}
+
+/** Windows' "default device" is the Console and Multimedia roles together. */
+function lockedDefaultRoles(
+  devices: LockedDefaultDevicesConfig
+): Array<{ flow: string; role: string; deviceName: string }> {
+  return [
+    { flow: "Render", role: "Console", deviceName: devices.playback },
+    { flow: "Render", role: "Multimedia", deviceName: devices.playback },
+    { flow: "Render", role: "Communications", deviceName: devices.communicationsPlayback },
+    { flow: "Capture", role: "Console", deviceName: devices.recording },
+    { flow: "Capture", role: "Multimedia", deviceName: devices.recording },
+    { flow: "Capture", role: "Communications", deviceName: devices.communicationsRecording }
+  ].filter((lock) => lock.deviceName);
 }
 
 function sameEndpointState(a: AudioEndpointState, b: AudioEndpointState): boolean {
