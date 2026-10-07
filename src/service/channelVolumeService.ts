@@ -17,6 +17,8 @@ export class ChannelVolumeService {
   private readonly log: Logger;
   private readonly config: AppConfig;
   private volumeController?: AudioEndpointVolumeController;
+  private watcher?: AudioEndpointWatcher;
+  private endpointNamesById = new Map<string, string>();
   private readonly latestStates = new Map<string, ChannelState>();
   private readonly listeners = new Set<(state: ChannelState) => void>();
   private endpointNames: string[] = [];
@@ -34,6 +36,7 @@ export class ChannelVolumeService {
       this.config.audio.lockedDefaultDevices,
       this.log
     );
+    this.watcher = watcher;
     this.volumeController ??= new WatchedAudioEndpointVolumeController(watcher);
     const matrixClient = new VbanTextClient(this.config.matrix, this.log);
     const matrixSync = new MatrixPresetSync(matrixClient, this.log);
@@ -47,6 +50,9 @@ export class ChannelVolumeService {
       endpoints$
         .pipe(
           tap((endpoints) => {
+            this.endpointNamesById = new Map(
+              endpoints.map((endpoint) => [endpoint.id, endpoint.name])
+            );
             const names = endpoints.map((endpoint) => endpoint.name).sort();
             if (names.join("\n") !== this.endpointNames.join("\n")) {
               this.endpointNames = names;
@@ -144,6 +150,69 @@ export class ChannelVolumeService {
     return () => this.listeners.delete(listener);
   }
 
+  /**
+   * Running apps with audio and the channel each one plays on. An app without a pinned
+   * endpoint follows the Windows default device, which is the default channel.
+   */
+  async listApps(): Promise<AppChannelRoute[]> {
+    if (!this.watcher) throw new Error("Channel volume service is not started");
+    const sessions = await this.watcher.listApps();
+    const channelByEndpointId = new Map(
+      this.listStates().map((state) => [state.endpoint.id, state.channelName])
+    );
+    const describe = (endpointId: string) =>
+      channelByEndpointId.get(endpointId) ??
+      this.endpointNamesById.get(endpointId) ??
+      "an unknown device";
+    const defaultChannel = this.defaultChannelName();
+
+    return sessions.map((session) => {
+      const pinned = session.pinnedEndpointId;
+      const pinnedChannel = pinned ? channelByEndpointId.get(pinned) : undefined;
+      return {
+        path: session.path,
+        name: session.name,
+        startedAt: session.startedAt,
+        playing: session.peak > 0.001,
+        channel: pinned ? (pinnedChannel ?? null) : defaultChannel,
+        pinnedDevice: pinned && !pinnedChannel ? describe(pinned) : undefined,
+        playsOn: [...new Set(session.activeEndpointIds.map(describe))]
+      };
+    });
+  }
+
+  /** Moves an app to a channel. The default channel clears the app's pin instead. */
+  async setAppChannel(path: string, channelName: string): Promise<void> {
+    if (!this.watcher) throw new Error("Channel volume service is not started");
+    const channel = this.config.audio.channels.find(
+      (candidate) => candidate.name.toLowerCase() === channelName.toLowerCase()
+    );
+    if (!channel) throw new UnknownAudioChannelError(channelName);
+
+    if (channel.name === this.defaultChannelName()) {
+      await this.watcher.setAppEndpoint(path);
+      return;
+    }
+    const endpointId = this.latestStates.get(channel.name)?.endpoint.id;
+    if (!endpointId) throw new Error(`Audio channel ${channel.name} has no active endpoint`);
+    await this.watcher.setAppEndpoint(path, endpointId);
+  }
+
+  appIcon(path: string): Promise<string | undefined> {
+    if (!this.watcher) return Promise.reject(new Error("Channel volume service is not started"));
+    return this.watcher.appIcon(path);
+  }
+
+  /** The channel on the Windows default playback device, where unpinned apps play. */
+  defaultChannelName(): string | null {
+    const playback = this.config.audio.lockedDefaultDevices.playback.toLowerCase();
+    return (
+      this.config.audio.channels.find((channel) =>
+        playback.includes(channel.endpointNameContains.toLowerCase())
+      )?.name ?? null
+    );
+  }
+
   async setVolume(channelName: string, volumePercent: number): Promise<void> {
     const channel = this.config.audio.channels.find(
       (candidate) => candidate.name.toLowerCase() === channelName.toLowerCase()
@@ -163,6 +232,18 @@ export class ChannelVolumeService {
       }
     ]);
   }
+}
+
+export interface AppChannelRoute {
+  path: string;
+  name: string;
+  startedAt?: string;
+  playing: boolean;
+  /** Null when the app is pinned to a device outside the channels, or follows no channel. */
+  channel: string | null;
+  pinnedDevice?: string;
+  /** Channels or devices where the app has an open session. */
+  playsOn: string[];
 }
 
 export class UnknownAudioChannelError extends Error {

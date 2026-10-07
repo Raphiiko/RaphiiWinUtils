@@ -23,7 +23,12 @@ import type { Updater } from "./updater.ts";
 import type { PhotoshopUxpLink } from "../context/photoshopUxpLink.ts";
 
 export class ControlServer {
-  private static readonly dashboardHashes = new Set(["#home", "#audio", "#wallpapers"]);
+  private static readonly dashboardHashes = new Set([
+    "#home",
+    "#audio",
+    "#audio/apps",
+    "#wallpapers"
+  ]);
   private readonly log: Logger;
   private readonly config: ControlConfig;
   private readonly updater: Updater;
@@ -187,6 +192,48 @@ export class ControlServer {
           }
         }
       })
+      .get("/audio/apps", async () => ({
+        channels: this.channelVolumes.configuredChannelNames(),
+        defaultChannel: this.channelVolumes.defaultChannelName(),
+        apps: await this.channelVolumes.listApps()
+      }))
+      .post(
+        "/audio/apps/channel",
+        async ({ body, set }) => {
+          try {
+            await this.channelVolumes.setAppChannel(body.path, body.channel);
+            return { applied: true };
+          } catch (error) {
+            set.status = error instanceof UnknownAudioChannelError ? 400 : 500;
+            this.log.error("Failed to route app audio", {
+              path: body.path,
+              channel: body.channel,
+              error: String(error)
+            });
+            return { applied: false, error: String((error as Error).message ?? error) };
+          }
+        },
+        { body: t.Object({ path: t.String(), channel: t.String() }) }
+      )
+      .get(
+        "/audio/apps/icon",
+        async ({ query, set }) => {
+          try {
+            const icon = await this.channelVolumes.appIcon(query.path);
+            if (!icon) {
+              set.status = 404;
+              return { error: "App has no icon" };
+            }
+            return new Response(Buffer.from(icon, "base64"), {
+              headers: { "content-type": "image/png", "cache-control": "max-age=86400" }
+            });
+          } catch (error) {
+            set.status = 404;
+            return { error: String((error as Error).message ?? error) };
+          }
+        },
+        { query: t.Object({ path: t.String() }) }
+      )
       .post("/audio/modes/:id", async ({ params, set }) => {
         try {
           const mode = await this.audioModes.applyMode(params.id);

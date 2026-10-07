@@ -15,6 +15,7 @@ export interface AudioWatcherMessage {
     | "snapshot"
     | "error"
     | "volume-policy-result"
+    | "app-result"
     | "default-device-reset";
   endpoints?: AudioEndpointState[];
   endpoint?: AudioEndpointState;
@@ -22,6 +23,8 @@ export interface AudioWatcherMessage {
   error?: string;
   requestId?: string;
   results?: AudioEndpointVolumePolicyResult[];
+  apps?: AppAudioSession[];
+  icon?: string | null;
   flow?: string;
   role?: string;
   from?: string;
@@ -45,4 +48,15 @@ export interface ChannelState {
   endpoint: AudioEndpointState;
   gainDb: number;
   muted: boolean;
+}
+
+export interface AppAudioSession {
+  path: string;
+  name: string;
+  startedAt?: string;
+  /** Endpoint the app is pinned to in Windows; absent when it follows the default device. */
+  pinnedEndpointId?: string;
+  /** Endpoints where the app has an active (open, not necessarily audible) session. */
+  activeEndpointIds: string[];
+  peak: number;
 }

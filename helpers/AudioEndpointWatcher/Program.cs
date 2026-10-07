@@ -152,6 +152,8 @@ internal sealed class EndpointWatcher : IDisposable
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
+    private static readonly JsonSerializerOptions CommandOptions = new() { PropertyNameCaseInsensitive = true };
+
     private const int DeviceChangeDebounceMs = 500;
 
     private readonly int resyncMs;
@@ -238,10 +240,16 @@ internal sealed class EndpointWatcher : IDisposable
                 string? deviceKey = null;
                 try
                 {
-                    var command = JsonSerializer.Deserialize<VolumePolicyCommand>(line, new JsonSerializerOptions
+                    var appCommand = JsonSerializer.Deserialize<AppCommand>(line, CommandOptions);
+                    if (appCommand?.Type?.StartsWith("app-", StringComparison.Ordinal) == true)
                     {
-                        PropertyNameCaseInsensitive = true
-                    }) ?? throw new ArgumentException("Invalid audio endpoint command");
+                        // Session scans take longer than volume writes; keep them off the slider path.
+                        _ = Task.Run(() => HandleAppCommand(appCommand));
+                        continue;
+                    }
+
+                    var command = JsonSerializer.Deserialize<VolumePolicyCommand>(line, CommandOptions)
+                        ?? throw new ArgumentException("Invalid audio endpoint command");
                     requestId = command.RequestId;
                     if (command.Type != "apply-volume-policy" || string.IsNullOrWhiteSpace(command.RequestId))
                         throw new ArgumentException("Unknown audio endpoint command");
@@ -272,6 +280,32 @@ internal sealed class EndpointWatcher : IDisposable
             foreach (var devices in devicesByFilter.Values)
                 foreach (var device in devices)
                     device.Dispose();
+        }
+    }
+
+    private void HandleAppCommand(AppCommand command)
+    {
+        try
+        {
+            switch (command.Type)
+            {
+                case "app-list":
+                    Write(new { type = "app-result", requestId = command.RequestId, apps = AppRouting.List() });
+                    break;
+                case "app-set-endpoint":
+                    AppRouting.SetEndpoint(command.Path ?? "", command.EndpointId);
+                    Write(new { type = "app-result", requestId = command.RequestId });
+                    break;
+                case "app-icon":
+                    Write(new { type = "app-result", requestId = command.RequestId, icon = AppRouting.IconBase64(command.Path ?? "") });
+                    break;
+                default:
+                    throw new ArgumentException($"Unknown app command: {command.Type}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Write(new { type = "app-result", requestId = command.RequestId, error = ex.Message });
         }
     }
 
@@ -623,6 +657,8 @@ internal sealed record VolumePolicyResult(
     bool Changed,
     int? PreviousVolumePercent,
     bool? Muted);
+
+internal sealed record AppCommand(string Type, string RequestId, string? Path, string? EndpointId);
 
 internal sealed record VolumePolicyCommand(
     string Type,
