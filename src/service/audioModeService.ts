@@ -434,8 +434,9 @@ export class AudioModeService {
       const gain = gains.get(this.pointName(candidate));
       const shouldExist = expected.has(key);
 
+      // A slot whose device is unplugged never replies, and it cannot feed the mic mix either.
       if (gain === undefined) {
-        failures.push(`${key} did not reply`);
+        if (shouldExist) failures.push(`${key} did not reply`);
         continue;
       }
 

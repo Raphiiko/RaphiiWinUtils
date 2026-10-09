@@ -199,6 +199,18 @@ void test("switches only the mic, and a mode switches back to its preferred mic"
   await assert.rejects(service.applyMic("nope"), /Unknown audio mic: nope/);
 });
 
+void test("switches a mode while another mic's device is unplugged", async () => {
+  const matrix = new FakeMatrixClient("Desktop Speakers");
+  matrix.unpluggedSlots.add("WIN7.IN");
+  const service = createService(matrix);
+
+  await service.applyMode("tws");
+  assert.deepEqual([...matrix.routedPoints], ["Point(WIN1.IN[1],VAIO1.OUT[1])"]);
+
+  matrix.unpluggedSlots.add("WIN1.IN");
+  await assert.rejects(service.applyMode("tws"), /Could not verify mic route for Desk/);
+});
+
 function createService(
   matrix: FakeMatrixClient,
   options: {
@@ -300,6 +312,7 @@ class FakeMatrixClient {
   currentDeviceName: string;
   currentDriver = "WDM";
   outputAssignmentAttempts = 0;
+  readonly unpluggedSlots = new Set<string>();
   cacheRefreshed: boolean;
   private readonly refreshOnRestart: boolean;
   private readonly onSend?: (command: string) => void;
@@ -349,9 +362,9 @@ class FakeMatrixClient {
       ]);
     }
 
-    const points = [...command.matchAll(/(Point\([^)]+\))\.dBGain = \?;/g)].map(
-      (match) => match[1]
-    );
+    const points = [...command.matchAll(/(Point\(([^[]+)[^)]+\))\.dBGain = \?;/g)]
+      .filter((match) => !this.unpluggedSlots.has(match[2] ?? ""))
+      .map((match) => match[1]);
     if (points.length > 0) {
       const gain = (point: string | undefined) =>
         point && this.routedPoints.has(point) ? "0.0" : "-inf";
