@@ -11,6 +11,7 @@ import {
 } from "../audio/audioEndpointVolumeController.ts";
 import { buildAudioModeVolumePolicies } from "../audio/audioModeVolumePolicies.ts";
 import type { AudioModePublisher } from "../mqtt/audioModePublisher.ts";
+import { FileAudioMqttStateStore } from "../mqtt/audioMqttStateStore.ts";
 import { VbanTextClient } from "../matrix/vbanTextClient.ts";
 import { Logger } from "../system/logger.ts";
 
@@ -27,6 +28,7 @@ interface AudioModeServiceDependencies {
   filterPreOutputVolumePolicies?: (
     policies: AudioEndpointVolumePolicy[]
   ) => AudioEndpointVolumePolicy[];
+  loadSavedMic?: () => Promise<string | undefined>;
 }
 
 const preSwitchVolumePolicyWaitMs = 1_000;
@@ -60,6 +62,8 @@ export class AudioModeService {
   private applyModeTail: Promise<unknown> = Promise.resolve();
   private queuedApplies = 0;
   private pendingMode?: { id: string; until: number; nextRetryAt: number };
+  private readonly loadSavedMic: () => Promise<string | undefined>;
+  private routedMicId?: string;
 
   constructor(
     config: AppConfig,
@@ -77,6 +81,8 @@ export class AudioModeService {
       dependencies.volumeController ?? new WindowsAudioEndpointVolumeController(this.log);
     this.filterPreOutputVolumePolicies =
       dependencies.filterPreOutputVolumePolicies ?? ((policies) => policies);
+    this.loadSavedMic =
+      dependencies.loadSavedMic ?? (async () => (await new FileAudioMqttStateStore().load()).mic);
   }
 
   listModes(): AudioModeSummary[] {
@@ -212,7 +218,7 @@ export class AudioModeService {
 
     await this.volumeController.apply(volumePolicies.afterOutputSwitch);
 
-    const verification = await this.applyMicRoutingWithRetry(mic);
+    const verification = await this.switchMic(mode.mic, mic);
 
     this.log.info("Audio mode applied", {
       id,
@@ -236,7 +242,7 @@ export class AudioModeService {
       throw new UnknownAudioMicError(id);
     }
 
-    const verification = await this.applyMicRoutingWithRetry(mic);
+    const verification = await this.switchMic(id, mic);
     this.log.info("Audio mic applied", {
       id,
       name: mic.name,
@@ -389,6 +395,37 @@ export class AudioModeService {
       };
     } finally {
       await client.close();
+    }
+  }
+
+  /** On failure, routes the previous mic again, because each attempt removed its routes. */
+  private async switchMic(id: string, mic: AudioMicConfig): Promise<{ attempts: number }> {
+    const previousId = this.routedMicId ?? (await this.loadSavedMic().catch(() => undefined));
+    try {
+      const verification = await this.applyMicRoutingWithRetry(mic);
+      this.routedMicId = id;
+      return verification;
+    } catch (error) {
+      const previous = previousId && previousId !== id && this.config.audioModes.mics[previousId];
+      if (previousId && previous) {
+        try {
+          await this.applyMicRoutingWithRetry(previous);
+          this.routedMicId = previousId;
+          this.log.warn("Mic switch failed; routed the previous mic again", {
+            failedMic: id,
+            previousMic: previousId
+          });
+          await this.publisher.publishMic(previousId).catch(() => undefined);
+        } catch (rollbackError: unknown) {
+          this.routedMicId = undefined;
+          this.log.error("Mic switch failed and the previous mic could not be routed again", {
+            failedMic: id,
+            previousMic: previousId,
+            error: formatUnknownError(rollbackError)
+          });
+        }
+      }
+      throw error;
     }
   }
 

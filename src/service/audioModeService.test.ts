@@ -211,6 +211,21 @@ void test("switches a mode while another mic's device is unplugged", async () =>
   await assert.rejects(service.applyMode("tws"), /Could not verify mic route for Desk/);
 });
 
+void test("routes the previous mic again when the new mic's slot never replies", async () => {
+  const matrix = new FakeMatrixClient("Desktop Speakers");
+  const published: string[] = [];
+  const service = createService(matrix, {
+    publisher: { ...publisher, publishMic: (id) => Promise.resolve(void published.push(id)) }
+  });
+
+  await service.applyMic("desktop");
+  matrix.unpluggedSlots.add("WIN7.IN");
+  await assert.rejects(service.applyMic("lav"), /Could not verify mic route for Lav/);
+
+  assert.deepEqual([...matrix.routedPoints], ["Point(WIN1.IN[1],VAIO1.OUT[1])"]);
+  assert.deepEqual(published, ["desktop", "desktop"]);
+});
+
 function createService(
   matrix: FakeMatrixClient,
   options: {
@@ -251,7 +266,8 @@ function createService(
     createMatrixClient: () => matrix,
     delay: () => Promise.resolve(),
     volumeController: options.volumeController ?? new FakeVolumeController(),
-    filterPreOutputVolumePolicies: options.filterPreOutputVolumePolicies
+    filterPreOutputVolumePolicies: options.filterPreOutputVolumePolicies,
+    loadSavedMic: () => Promise.resolve(undefined)
   });
 }
 
