@@ -23,16 +23,22 @@ void test("soft recovery serializes VR stack launch and restores the last instan
   });
   assert.deepEqual(events, [
     "find-instance",
-    "stop:VRChat,OyasumiVR,vrmonitor,vrserver",
+    "stop:VRChat,OyasumiVR,vrstartup,vrmonitor,vrserver,vrcompositor,vrdashboard,steam,steamwebhelper",
     "sleep:5000",
     "probe:steam",
+    "launch-steam",
     "probe:steam",
+    "probe:steamwebhelper",
+    "sleep:5000",
+    "probe:vrmonitor",
     "launch:250820",
     "probe:vrmonitor",
     "probe:vrserver",
     "probe:oyasumivr",
     "launch:438100:vrchat://launch?ref=vrchat.com&id=wrld_12345678-1234-1234-1234-123456789abc:42~region(eu)",
-    "probe:vrchat"
+    "launch:2538150",
+    "probe:vrchat",
+    "probe:oyasumivr"
   ]);
   assert.ok(phases.includes("stopping-vr-stack"));
   assert.deepEqual(service.getStatus().completedPhases, [
@@ -40,10 +46,89 @@ void test("soft recovery serializes VR stack launch and restores the last instan
     "stopping-vr-stack",
     "waiting-for-steam",
     "waiting-for-steamvr",
-    "waiting-for-oyasumi",
     "launching-vrchat",
+    "waiting-for-oyasumi",
     "verifying-rejoin"
   ]);
+});
+
+void test("start does not relaunch a SteamVR that restarted by itself", async () => {
+  const events: string[] = [];
+  const service = new VrChatRecoveryService(
+    testConfig(),
+    new Logger("test"),
+    dependencies(events, {
+      stopProcesses: (names) => {
+        events.push(`stop:${names.join(",")}`);
+        return Promise.resolve();
+      }
+    })
+  );
+
+  assert.equal((await service.startVrChat()).accepted, true);
+  assert.equal(events.includes("launch:250820"), false);
+  assert.equal(service.getStatus().phase, "completed");
+});
+
+void test("a new recovery replaces one that is stuck", async () => {
+  const events: string[] = [];
+  let hang = true;
+  const service = new VrChatRecoveryService(
+    testConfig(),
+    new Logger("test"),
+    dependencies(events, {
+      stopProcesses: (names) => {
+        events.push(`stop:${names.join(",")}`);
+        return hang ? new Promise<void>(() => {}) : Promise.resolve();
+      }
+    })
+  );
+
+  const stuck = service.startVrChat("panel-1");
+  await waitFor(() => service.getStatus().phase === "stopping-vr-stack");
+  hang = false;
+  assert.deepEqual(await service.recoverLastInstance("panel-2"), {
+    accepted: true,
+    operationId: "panel-2"
+  });
+  assert.equal((await stuck).accepted, false);
+  assert.equal(service.getStatus().operationId, "panel-2");
+  assert.equal(service.getStatus().phase, "completed");
+});
+
+void test("a prepared recovery replaces one that is stuck", async () => {
+  const service = new VrChatRecoveryService(
+    testConfig(),
+    new Logger("test"),
+    dependencies([], { stopProcesses: () => new Promise<void>(() => {}) })
+  );
+
+  void service.startVrChat("panel-1");
+  await waitFor(() => service.getStatus().phase === "stopping-vr-stack");
+  assert.equal((await service.prepare("soft-recover", "panel-2")).accepted, true);
+  assert.equal(service.getStatus().operationId, "panel-2");
+  assert.equal(service.getStatus().phase, "soft-recovering");
+  await service.cancel("panel-2");
+});
+
+void test("a local recovery interrupted by a restart is reported as failed", async () => {
+  const service = new VrChatRecoveryService(
+    testConfig(),
+    new Logger("test"),
+    dependencies([], {
+      loadStatus: () => Promise.resolve({
+        operationId: "panel-1",
+        action: "soft-recover",
+        phase: "stopping-vr-stack",
+        updatedAt: new Date(0).toISOString()
+      })
+    })
+  );
+
+  await service.start();
+  assert.equal(service.getStatus().phase, "failed-needs-attention");
+  assert.match(service.getStatus().reason ?? "", /restarted during soft-recover/);
+  assert.equal((await service.startVrChat("panel-2")).accepted, true);
 });
 
 void test("merges correlated Home Assistant steps into the authoritative recovery history", async () => {
@@ -156,6 +241,7 @@ void test("start waits for each VR stack dependency before launching its depende
       launchSteamClient: () => {
         events.push("launch-steam");
         running.add("steam");
+        running.add("steamwebhelper");
         return Promise.resolve();
       },
       launchSteamApp: (_path, appId, args = []) => {
@@ -201,6 +287,7 @@ void test("start launches VRChat after SteamVR even when OyasumiVR never becomes
         Promise.resolve(new Set(names.filter((name) => running.has(name.toLowerCase())))),
       launchSteamClient: () => {
         running.add("steam");
+        running.add("steamwebhelper");
         return Promise.resolve();
       },
       launchSteamApp: (_path, appId) => {
@@ -275,7 +362,7 @@ void test("local recovery replaces a stale hard recovery journal", async () => {
   assert.equal(saved.at(-1)?.phase, "completed");
 });
 
-void test("a local recovery cannot replace a pending hard recovery", async () => {
+void test("a local recovery cannot replace a hard recovery that commanded the reboot", async () => {
   const events: string[] = [];
   let saved: VrRecoveryStatus | undefined;
   const first = new VrChatRecoveryService(
@@ -434,12 +521,19 @@ function testConfig() {
   };
 }
 
+const steamAppProcesses: Record<string, string[]> = {
+  "250820": ["vrmonitor", "vrserver"],
+  "2538150": ["oyasumivr"],
+  "438100": ["vrchat"]
+};
+
 function dependencies(
   events: string[],
   overrides: Partial<VrChatRecoveryDependencies> = {}
 ): Partial<VrChatRecoveryDependencies> {
   const instanceId = "wrld_12345678-1234-1234-1234-123456789abc:42~region(eu)";
   let operation = 0;
+  const running = new Set(["steam", "steamwebhelper", "vrmonitor", "vrserver", "oyasumivr", "vrchat"]);
   return {
     findLastInstanceId: () => {
       events.push("find-instance");
@@ -447,18 +541,24 @@ function dependencies(
     },
     getRunningProcessNames: (names) => {
       events.push(`probe:${names[0]?.toLowerCase()}`);
-      return Promise.resolve(new Set(names.map((name) => name.toLowerCase())));
+      return Promise.resolve(
+        new Set(names.map((name) => name.toLowerCase()).filter((name) => running.has(name)))
+      );
     },
     stopProcesses: (names) => {
       events.push(`stop:${names.join(",")}`);
+      for (const name of names) running.delete(name.toLowerCase());
       return Promise.resolve();
     },
     launchSteamClient: () => {
       events.push("launch-steam");
+      running.add("steam");
+      running.add("steamwebhelper");
       return Promise.resolve();
     },
     launchSteamApp: (_path, appId, args = []) => {
       events.push(`launch:${appId}${args.length ? `:${args.join(",")}` : ""}`);
+      for (const name of steamAppProcesses[appId] ?? []) running.add(name);
       return Promise.resolve();
     },
     isMatrixReady: () => {

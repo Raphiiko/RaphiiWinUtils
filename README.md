@@ -294,15 +294,18 @@ foreground and title changes, plus a slow fallback poll. It also sends the keyst
 When MQTT is enabled, the discovered **Shirakami** device exposes two mutually exclusive buttons:
 
 - **Start VRChat** cleanly restarts the VR stack and launches VRChat normally.
-- **SteamVR soft recovery** cleanly restarts VRChat, SteamVR, and OyasumiVR, then rejoins the latest
-  VRChat instance found in `output_log_*.txt`.
+- **SteamVR soft recovery** force-quits VRChat, OyasumiVR, SteamVR, and Steam, starts them again,
+  then rejoins the latest VRChat instance found in `output_log_*.txt`. Restarting Steam closes any
+  Steam dialog that would otherwise wait for someone at the desk.
 
 Hard recovery is owned by Home Assistant and is deliberately requested over MQTT with an owner-created
 operation ID; it records that instance, force-stops the VR stack, and requests `shutdown.exe /r /f /t 0`.
 The forced reboot does not wait for Windows' application-close prompt.
 
-All three routes go through one shared coordinator. A second request while any recovery is active is
-rejected, and duplicate MQTT delivery cannot start a second recovery. SteamVR is launched through
+All three routes go through one shared coordinator, which runs one operation at a time. A request with
+a new operation ID aborts the running operation and replaces it, so a stuck recovery never blocks the
+next one. The only exception is a hard recovery that has already commanded the reboot. Duplicate MQTT
+delivery of the same operation ID cannot start a second recovery. SteamVR is launched through
 Steam app `250820`, OyasumiVR through `2538150`, and VRChat through `438100`; launching through Steam
 preserves any Steam launch options such as CPU affinity.
 

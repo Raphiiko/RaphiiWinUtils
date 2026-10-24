@@ -508,14 +508,8 @@ export class MqttAudioSyncService implements AudioModePublisher {
       action === "soft-recover"
         ? await this.vrChatRecovery.recoverLastInstance(operationId)
         : await this.vrChatRecovery.startVrChat(operationId);
-    if (!result.accepted) {
-      this.log.warn(
-        "Ignoring MQTT VR recovery action because another action is running or recovery is disabled",
-        {
-          action
-        }
-      );
-    }
+    if (!result.accepted)
+      this.log.warn("MQTT VR recovery action did not complete", { action, reason: result.reason });
   }
 
   private async resumeHardRecovery(operationId: string): Promise<void> {

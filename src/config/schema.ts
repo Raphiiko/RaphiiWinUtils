@@ -161,6 +161,8 @@ export interface HardRecoveryConfig {
 /** Readiness and retry policy shared by every VR stack startup. */
 export interface VrStackStartupConfig {
   steamReadyTimeoutMs: number;
+  /** Pause after starting Steam before sending it launch commands. */
+  steamSettleMs: number;
   steamVrReadyTimeoutMs: number;
   oyasumiReadyTimeoutMs: number;
   vrChatJoinTimeoutMs: number;
@@ -384,7 +386,7 @@ export const defaultConfig: AppConfig = {
   vrChatRecovery: {
     enabled: true,
     startWatchdogTimeoutMs: 180_000,
-    softRecoveryWatchdogTimeoutMs: 300_000,
+    softRecoveryWatchdogTimeoutMs: 480_000,
     steamPath: "C:\\Program Files (x86)\\Steam\\steam.exe",
     steamVrAppId: "250820",
     oyasumiVrAppId: "2538150",
@@ -394,6 +396,7 @@ export const defaultConfig: AppConfig = {
   },
   vrStackStartup: {
     steamReadyTimeoutMs: 90_000,
+    steamSettleMs: 5_000,
     steamVrReadyTimeoutMs: 90_000,
     oyasumiReadyTimeoutMs: 60_000,
     vrChatJoinTimeoutMs: 120_000,

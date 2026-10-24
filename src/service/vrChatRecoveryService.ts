@@ -121,6 +121,11 @@ export class VrChatRecoveryService {
       return;
     }
     if (!saved) return;
+    if (!saved.prepared && saved.action !== "hard-recover" && !isTerminalPhase(saved.phase)) {
+      this.status = saved;
+      await this.fail(`RaphiiWinUtils restarted during ${saved.action ?? "recovery"} at ${saved.phase}`);
+      return;
+    }
 
     this.status = {
       ...saved,
@@ -195,7 +200,7 @@ export class VrChatRecoveryService {
           : { accepted: false, reason: "operation ID belongs to a different recovery action" }
       );
     }
-    if (this.active) return Promise.resolve(this.rejectedBusyResult());
+    if (this.isRebootPending()) return Promise.resolve(this.rejectedBusyResult());
 
     const recovery = this.beginOperation(operationId, action);
     const phase = initialPhase(action);
@@ -257,14 +262,17 @@ export class VrChatRecoveryService {
     if (!this.config.hardRecovery.enabled) {
       return Promise.resolve({ accepted: false, reason: "hard recovery is disabled" });
     }
-    if (this.active) {
-      if (this.active.operationId !== operationId || this.active.action !== "hard-recover")
-        return Promise.resolve(this.rejectedBusyResult());
-      if (this.active.running) return Promise.resolve({ accepted: true, operationId });
+    const owned = this.active?.operationId === operationId ? this.active : undefined;
+    if (owned) {
+      if (owned.action !== "hard-recover")
+        return Promise.resolve({ accepted: false, reason: "operation ID belongs to a different recovery action" });
+      if (owned.running) return Promise.resolve({ accepted: true, operationId });
     } else if (this.isSameOperation(operationId)) {
       return Promise.resolve({ accepted: true, operationId });
+    } else if (this.isRebootPending()) {
+      return Promise.resolve(this.rejectedBusyResult());
     }
-    const recovery = this.active ?? this.beginOperation(operationId, "hard-recover");
+    const recovery = owned ?? this.beginOperation(operationId, "hard-recover");
     void this.run(recovery, async () => {
       if (this.status.operationId === operationId)
         await this.setStatus({ prepared: false }, recovery);
@@ -322,14 +330,17 @@ export class VrChatRecoveryService {
     if (!this.config.vrChatRecovery.enabled) {
       return { accepted: false, reason: "VR recovery is disabled" };
     }
-    if (this.active) {
-      if (this.active.operationId !== operationId || this.active.action !== action)
-        return this.rejectedBusyResult();
-      if (this.active.running) return { accepted: true, operationId };
+    const owned = this.active?.operationId === operationId ? this.active : undefined;
+    if (owned) {
+      if (owned.action !== action)
+        return { accepted: false, reason: "operation ID belongs to a different recovery action" };
+      if (owned.running) return { accepted: true, operationId };
     } else if (this.isSameOperation(operationId)) {
       return { accepted: true, operationId };
+    } else if (this.isRebootPending()) {
+      return this.rejectedBusyResult();
     }
-    const recovery = this.active ?? this.beginOperation(operationId, action);
+    const recovery = owned ?? this.beginOperation(operationId, action);
     const running = this.run(recovery, async () => {
       if (this.status.operationId === operationId)
         await this.setStatus({ prepared: false }, recovery);
@@ -459,19 +470,23 @@ export class VrChatRecoveryService {
       "waiting-for-steam",
       recovery,
       async () => {
-        if (!(await this.isRunning("steam", recovery))) {
-          await this.awaitExternal(
-            this.dependencies.launchSteamClient(this.config.vrChatRecovery.steamPath),
-            recovery
-          );
-        }
+        if (await this.isRunning("steam", recovery)) return;
+        await this.awaitExternal(
+          this.dependencies.launchSteamClient(this.config.vrChatRecovery.steamPath),
+          recovery
+        );
+        // A launch command sent while Steam is still bootstrapping can start a second client,
+        // so wait for its web helper and give the client time to settle.
         const ready = await this.waitFor(
-          () => this.isRunning("steam", recovery),
+          async () =>
+            (await this.isRunning("steam", recovery)) &&
+            (await this.isRunning("steamwebhelper", recovery)),
           this.config.vrStackStartup.steamReadyTimeoutMs,
           this.config.vrStackStartup.retryDelayMs,
           recovery
         );
         if (!ready) throw new Error("Steam did not become ready in time");
+        await this.sleep(this.config.vrStackStartup.steamSettleMs, recovery);
       }
     );
   }
@@ -481,6 +496,12 @@ export class VrChatRecoveryService {
       "waiting-for-steamvr",
       recovery,
       async () => {
+        // SteamVR can start again by itself after it is stopped. Launching it a second time only
+        // makes Steam show a "Game already running" dialog.
+        if (
+          (await this.isRunning("vrmonitor", recovery)) &&
+          (await this.isRunning("vrserver", recovery))
+        ) return;
         const ready = await this.launchWithRetry(
           "SteamVR",
           async () =>
@@ -592,12 +613,24 @@ export class VrChatRecoveryService {
   }
 
   private async stopVrStack(recovery: RecoveryOperation): Promise<void> {
+    // Soft recovery also restarts Steam, which closes any Steam dialog (a failed launch, a cloud
+    // sync conflict) that would otherwise wait for someone at the desk.
+    const steam = recovery.action === "soft-recover" ? ["steam", "steamwebhelper"] : [];
     await this.withActivePhase(
       "stopping-vr-stack",
       recovery,
       async () => {
         await this.awaitExternal(
-          this.dependencies.stopProcesses(["VRChat", "OyasumiVR", "vrmonitor", "vrserver"]),
+          this.dependencies.stopProcesses([
+            "VRChat",
+            "OyasumiVR",
+            "vrstartup",
+            "vrmonitor",
+            "vrserver",
+            "vrcompositor",
+            "vrdashboard",
+            ...steam
+          ]),
           recovery
         );
         await this.sleep(
@@ -622,7 +655,13 @@ export class VrChatRecoveryService {
     for (let attempt = 1; attempt <= this.config.vrStackStartup.maxLaunchAttempts; attempt += 1) {
       this.throwIfAborted(recovery);
       await this.setStatus({ attempt }, recovery);
-      await launch();
+      if (attempt > 1 && (await isReady())) return true;
+      try {
+        await launch();
+      } catch (error) {
+        if (isAbortError(error)) throw error;
+        this.log.warn(`${stage} launch command failed`, { attempt, error: formatError(error) });
+      }
       if (await this.waitFor(isReady, timeoutMs, this.config.vrStackStartup.retryDelayMs, recovery))
         return true;
       if (attempt < this.config.vrStackStartup.maxLaunchAttempts) {
@@ -675,6 +714,15 @@ export class VrChatRecoveryService {
   }
 
   private beginOperation(operationId: string, action: VrRecoveryAction): RecoveryOperation {
+    if (this.active) {
+      this.log.warn("Replacing the running VR recovery", {
+        replacedOperationId: this.active.operationId,
+        replacedAction: this.active.action,
+        replacedPhase: this.status.phase,
+        operationId,
+        action
+      });
+    }
     this.abortActive();
     this.activePhases.clear();
     const recovery = this.restoreOperation(operationId, action);
@@ -723,6 +771,11 @@ export class VrChatRecoveryService {
 
   private isSameOperation(operationId: string): boolean {
     return this.active?.operationId === operationId || this.status.operationId === operationId;
+  }
+
+  /** Windows is already going down for a hard recovery, so nothing may replace it. */
+  private isRebootPending(): boolean {
+    return !!this.active && this.status.phase === "reboot-commanded";
   }
 
   private rejectedBusyResult(): VrChatRecoveryRequestResult {

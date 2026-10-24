@@ -200,6 +200,7 @@
   },
   "vrStackStartup": {
     "steamReadyTimeoutMs": 90000,
+    "steamSettleMs": 5000,
     "steamVrReadyTimeoutMs": 90000,
     "oyasumiReadyTimeoutMs": 60000,
     "vrChatJoinTimeoutMs": 120000,
