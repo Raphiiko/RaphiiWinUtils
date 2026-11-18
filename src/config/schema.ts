@@ -332,7 +332,7 @@ export const defaultConfig: AppConfig = {
       },
       tws: {
         name: "TWS",
-        outputDeviceName: "Headphones (Nothing Ear (a))",
+        outputDeviceName: "Headphones (Nothing Ear (3))",
         mic: "desktop"
       },
       "steam-link": {
@@ -421,7 +421,7 @@ export const defaultConfig: AppConfig = {
     enabled: true,
     host: "127.0.0.1",
     port: 17642,
-    taskbarBluetoothDevice: "Nothing Ear (a)",
+    taskbarBluetoothDevice: "Nothing Ear (3)",
     djiMicCommand: "djimic"
   },
   panelContext: {
