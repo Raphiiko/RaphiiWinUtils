@@ -283,7 +283,7 @@ export const defaultConfig: AppConfig = {
       },
       lav: {
         name: "Lav",
-        inputSlot: "WIN7.IN",
+        inputSlot: "WIN5.IN",
         routes: [
           { inputChannel: 1, outputChannel: 1 },
           { inputChannel: 2, outputChannel: 2 }
