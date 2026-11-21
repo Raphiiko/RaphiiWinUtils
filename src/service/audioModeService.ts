@@ -267,7 +267,7 @@ export class AudioModeService {
   private buildOutputCommand(mode: AudioModeConfig): string {
     const slot = this.config.audioModes.mainOutputSlot;
     return (
-      `Slot(${slot}).Device.${outputDriver(mode)} = "${escapeMatrixString(mode.outputDeviceName)}";` +
+      `Slot(${slot}).Device.${outputDriver(mode)} = "${escapeMatrixString(matrixOutputDeviceName(mode))}";` +
       `Slot(${slot}).Online = 1;`
     );
   }
@@ -349,7 +349,7 @@ export class AudioModeService {
 
       this.log.warn("Matrix output switch did not take effect; restarting audio engine", {
         attempt,
-        expectedDeviceName: mode.outputDeviceName,
+        expectedDeviceName: matrixOutputDeviceName(mode),
         expectedDriver: outputDriver(mode),
         actualDeviceName: actual.name,
         actualDriver: actual.driver
@@ -360,7 +360,7 @@ export class AudioModeService {
     }
 
     throw new Error(
-      `Could not switch ${this.config.audioModes.mainOutputSlot} to ${outputDriver(mode)} "${mode.outputDeviceName}"` +
+      `Could not switch ${this.config.audioModes.mainOutputSlot} to ${outputDriver(mode)} "${matrixOutputDeviceName(mode)}"` +
         ` after ${attempts} attempt(s); Matrix reports ${
           actual.name === undefined
             ? "no response"
@@ -562,13 +562,20 @@ function audioDeviceName(endpointName: string): string | undefined {
   return endpointName.match(/\(([^()]+)\)\s*$/)?.[1]?.trim().toLowerCase();
 }
 
+const maxMmeDeviceNameLength = 31;
+
+export function matrixDeviceNameForDriver(deviceName: string, driver = "WDM"): string {
+  return driver === "MME" ? deviceName.slice(0, maxMmeDeviceNameLength) : deviceName;
+}
+
 export function isAudioDevicePresent(
   endpointNames: string[],
   matrixDeviceName: string,
   driver = "WDM"
 ): boolean {
+  const expected = matrixDeviceNameForDriver(matrixDeviceName, driver);
   return endpointNames.some((name) =>
-    driver === "MME" ? name.startsWith(matrixDeviceName) : isSameAudioDevice(name, matrixDeviceName)
+    driver === "MME" ? name.startsWith(expected) : isSameAudioDevice(name, expected)
   );
 }
 
@@ -577,8 +584,13 @@ function isOutputSelected(
   mode: AudioModeConfig
 ): boolean {
   return (
-    actual.driver === outputDriver(mode) && isSameAudioDevice(actual.name, mode.outputDeviceName)
+    actual.driver === outputDriver(mode) &&
+    isSameAudioDevice(actual.name, matrixOutputDeviceName(mode))
   );
+}
+
+function matrixOutputDeviceName(mode: AudioModeConfig): string {
+  return matrixDeviceNameForDriver(mode.outputDeviceName, outputDriver(mode));
 }
 
 function outputDriver(mode: AudioModeConfig): string {

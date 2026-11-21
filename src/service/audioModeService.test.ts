@@ -7,7 +7,7 @@ import type {
 } from "../audio/audioEndpointVolumeController.ts";
 import type { AudioModePublisher } from "../mqtt/audioModePublisher.ts";
 import type { Logger } from "../system/logger.ts";
-import { AudioModeService, isSameAudioDevice } from "./audioModeService.ts";
+import { AudioModeService, isAudioDevicePresent, isSameAudioDevice } from "./audioModeService.ts";
 
 void test("accepts a renamed endpoint label but not a different device", () => {
   const configured = "In Ear Monitors (2- USB-C to 3.5mm Headphone Jack Adapter)";
@@ -153,6 +153,31 @@ void test("switches a WDM output to the same device through MME", async () => {
   assert.equal(matrix.commands.includes("Command.Restart = 1;"), false);
 });
 
+void test("truncates MME output names to 31 characters for Matrix and matches the full Windows endpoint", async () => {
+  const fullName = "Steam Link (Steam Streaming Speakers)";
+  const mmeName = "Steam Link (Steam Streaming Spe";
+  const matrix = new FakeMatrixClient(fullName);
+  const service = createService(matrix, {
+    outputDeviceName: fullName,
+    outputDriver: "MME"
+  });
+
+  await service.applyMode("tws");
+
+  assert.equal(defaultConfig.audioModes.modes["steam-link"]?.outputDriver, "MME");
+  assert.equal(matrix.currentDriver, "MME");
+  assert.equal(matrix.currentDeviceName, mmeName);
+  assert.ok(
+    matrix.commands.includes(`Slot(WIN1.OUT).Device.MME = "${mmeName}";Slot(WIN1.OUT).Online = 1;`)
+  );
+  assert.equal(isAudioDevicePresent([fullName], fullName, "MME"), true);
+  assert.equal(isAudioDevicePresent([fullName], mmeName, "MME"), true);
+  assert.equal(
+    isAudioDevicePresent(["Steam Link (Input) (Steam Streaming Speakers)"], fullName, "MME"),
+    false
+  );
+});
+
 void test("applies a failed mode once its output appears in Windows, but not after a minute", async () => {
   const matrix = new FakeMatrixClient("Desktop Speakers", true, false);
   const service = createService(matrix);
@@ -230,6 +255,7 @@ function createService(
   matrix: FakeMatrixClient,
   options: {
     channelVolumeOverrides?: Record<string, number>;
+    outputDeviceName?: string;
     outputDriver?: "WDM" | "MME";
     volumeController?: AudioEndpointVolumeController;
     publisher?: AudioModePublisher;
@@ -255,7 +281,7 @@ function createService(
   config.audioModes.modes = {
     tws: {
       name: "TWS",
-      outputDeviceName: "Nothing Ear",
+      outputDeviceName: options.outputDeviceName ?? "Nothing Ear",
       mic: "desktop",
       channelVolumeOverrides: options.channelVolumeOverrides,
       outputDriver: options.outputDriver

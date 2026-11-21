@@ -338,6 +338,7 @@ export const defaultConfig: AppConfig = {
       "steam-link": {
         name: "Steam Link",
         outputDeviceName: "Steam Link (Steam Streaming Speakers)",
+        outputDriver: "MME",
         mic: "steam"
       }
     }
