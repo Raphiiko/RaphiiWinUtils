@@ -8,6 +8,9 @@ internal static class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        // The default handler shows a modal dialog that can stay invisible and holds WinForms'
+        // window-creation lock, which freezes the taskbar panel. Crashing lets the service restart us.
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
         ApplicationConfiguration.Initialize();
         Application.Run(
             new TrayContext(
@@ -178,6 +181,12 @@ internal sealed class DashboardPopup : Form
         browser.CoreWebView2.ProcessFailed += (_, eventArgs) =>
         {
             Console.Error.WriteLine($"WebView process failed: {eventArgs.ProcessFailedKind}");
+            Environment.Exit(1);
+        };
+        // A dead browser leaves a disposed controller that throws on the next Show.
+        browser.CoreWebView2.Environment.BrowserProcessExited += (_, eventArgs) =>
+        {
+            Console.Error.WriteLine($"WebView browser process exited: {eventArgs.BrowserProcessExitKind}");
             Environment.Exit(1);
         };
         browser.Source = new Uri(url);
